@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Plus, Search, Edit, Trash2, User, AlertCircle, Cake, X, DollarSign, Activity } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, User, AlertCircle, Cake, X, DollarSign, Activity, Trophy, Award, Star } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
@@ -20,6 +20,10 @@ interface Aluno {
   neurodivergente: boolean;
   detalhes_condicao: string;
   gatilhos_cuidados: string;
+  // Campos novos (Visual)
+  competidor?: boolean;
+  bolsista?: boolean;
+  bolsista_a2?: boolean;
   created_at: string;
 }
 
@@ -29,11 +33,9 @@ export default function Alunos() {
   const [searchTerm, setSearchTerm] = useState('');
   const [showForm, setShowForm] = useState(false);
   
-  // Estados para Visualização de Detalhes (Prontuário)
   const [selectedAluno, setSelectedAluno] = useState<Aluno | null>(null);
   const [dividaTotal, setDividaTotal] = useState(0);
 
-  // Estados do Formulário (Edição/Criação)
   const [formData, setFormData] = useState<Partial<Aluno>>({});
   const [editMode, setEditMode] = useState(false);
 
@@ -57,11 +59,9 @@ export default function Alunos() {
     }
   }
 
-  // Função para abrir o Prontuário (Detalhes)
   async function handleOpenDetails(aluno: Aluno) {
     setSelectedAluno(aluno);
     
-    // Buscar dívidas (Vendas "Fiado")
     const { data: vendas } = await supabase
       .from('vendas')
       .select('total')
@@ -76,20 +76,22 @@ export default function Alunos() {
     }
   }
 
-  // Função para salvar (Criar ou Editar)
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     try {
+      // Removemos campos undefined para evitar erro se a coluna não existir
+      const payload = { ...formData };
+      
       if (editMode && formData.id) {
         const { error } = await supabase
           .from('alunos')
-          .update(formData)
+          .update(payload)
           .eq('id', formData.id);
         if (error) throw error;
       } else {
         const { error } = await supabase
           .from('alunos')
-          .insert([formData]);
+          .insert([payload]);
         if (error) throw error;
       }
       
@@ -99,7 +101,7 @@ export default function Alunos() {
       fetchAlunos();
     } catch (error) {
       console.error('Erro ao salvar aluno:', error);
-      alert('Erro ao salvar aluno');
+      alert('Erro ao salvar: Verifique se o banco de dados tem as colunas novas criadas (competidor, bolsista, bolsista_a2).');
     }
   }
 
@@ -114,12 +116,10 @@ export default function Alunos() {
     }
   }
 
-  // Verifica se é aniversário (Dia e Mês)
   function isAniversariante(dataNasc: string) {
     if (!dataNasc) return false;
     const hoje = new Date();
     const nasc = new Date(dataNasc);
-    // Ajuste de fuso horário simples
     const nascAjustado = new Date(nasc.getUTCFullYear(), nasc.getUTCMonth(), nasc.getUTCDate());
     
     return hoje.getDate() === nascAjustado.getDate() && 
@@ -181,11 +181,16 @@ export default function Alunos() {
                   <tr key={aluno.id} className="hover:bg-slate-50 transition-colors cursor-pointer" onClick={() => handleOpenDetails(aluno)}>
                     <td className="p-4">
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center overflow-hidden">
+                        <div className="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center overflow-hidden relative">
                           {aluno.foto_url ? (
                             <img src={aluno.foto_url} alt={aluno.nome} className="w-full h-full object-cover" />
                           ) : (
                             <User size={20} className="text-slate-400" />
+                          )}
+                          {aluno.competidor && (
+                             <div className="absolute -bottom-1 -right-1 bg-yellow-400 rounded-full p-0.5 border border-white" title="Competidor">
+                               <Trophy size={10} className="text-yellow-900" />
+                             </div>
                           )}
                         </div>
                         <div>
@@ -197,7 +202,10 @@ export default function Alunos() {
                               </span>
                             )}
                           </div>
-                          <div className="text-sm text-slate-500 sm:hidden">{aluno.graduacao}</div>
+                          <div className="flex gap-1 mt-1 sm:hidden">
+                            {aluno.competidor && <Trophy size={14} className="text-yellow-500" />}
+                            {aluno.bolsista && <Award size={14} className="text-green-500" />}
+                          </div>
                         </div>
                       </div>
                     </td>
@@ -245,10 +253,10 @@ export default function Alunos() {
 
       {/* MODAL: Prontuário do Aluno (Visualização) */}
       {selectedAluno && !showForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 animate-fadeIn">
           <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl">
             {/* Header do Modal */}
-            <div className="relative h-32 bg-gradient-to-r from-blue-600 to-blue-800 p-6 flex items-end">
+            <div className="relative h-40 bg-gradient-to-r from-blue-600 to-blue-800 p-6 flex items-end">
               <button 
                 onClick={() => setSelectedAluno(null)}
                 className="absolute top-4 right-4 text-white/80 hover:text-white bg-black/20 rounded-full p-1"
@@ -257,7 +265,7 @@ export default function Alunos() {
               </button>
               
               <div className="flex items-end gap-4 translate-y-8">
-                <div className="w-24 h-24 rounded-xl border-4 border-white bg-slate-200 overflow-hidden shadow-lg">
+                <div className="w-24 h-24 rounded-xl border-4 border-white bg-slate-200 overflow-hidden shadow-lg relative">
                   {selectedAluno.foto_url ? (
                     <img src={selectedAluno.foto_url} alt="" className="w-full h-full object-cover" />
                   ) : (
@@ -268,13 +276,30 @@ export default function Alunos() {
                 </div>
                 <div className="mb-2">
                   <h3 className="text-2xl font-bold text-white shadow-sm">{selectedAluno.nome}</h3>
-                  <div className="flex gap-2 mt-1">
+                  <div className="flex flex-wrap gap-2 mt-2">
                     <span className="px-2 py-0.5 bg-white/20 text-white rounded text-sm backdrop-blur-sm border border-white/30">
                       {selectedAluno.graduacao}
                     </span>
                     {isAniversariante(selectedAluno.data_nascimento) && (
                       <span className="px-2 py-0.5 bg-pink-500 text-white rounded text-sm flex items-center gap-1 shadow-sm">
                         <Cake size={14} /> Aniversariante
+                      </span>
+                    )}
+                    
+                    {/* SELOS VISUAIS */}
+                    {selectedAluno.competidor && (
+                      <span className="px-2 py-0.5 bg-yellow-400 text-yellow-900 rounded text-sm flex items-center gap-1 shadow-sm font-bold">
+                        <Trophy size={14} /> Competidor
+                      </span>
+                    )}
+                    {selectedAluno.bolsista && (
+                      <span className="px-2 py-0.5 bg-green-500 text-white rounded text-sm flex items-center gap-1 shadow-sm">
+                        <Award size={14} /> Bolsista BJJ
+                      </span>
+                    )}
+                    {selectedAluno.bolsista_a2 && (
+                      <span className="px-2 py-0.5 bg-purple-500 text-white rounded text-sm flex items-center gap-1 shadow-sm">
+                        <Star size={14} /> Bolsista A2
                       </span>
                     )}
                   </div>
@@ -298,12 +323,20 @@ export default function Alunos() {
                       }`}>
                         {selectedAluno.status}
                       </h4>
+                      {/* Aviso de Isenção */}
+                      {(selectedAluno.bolsista || selectedAluno.bolsista_a2) && (
+                         <span className="text-xs font-bold text-slate-500 uppercase mt-1 block">
+                           (Isento de Pagamento - Bolsista)
+                         </span>
+                      )}
                     </div>
                     <Activity className={selectedAluno.status === 'Ativo' ? 'text-green-500' : 'text-red-500'} />
                   </div>
-                  <p className="text-xs text-slate-500 mt-2">
-                    Vencimento sugerido: Dia 10
-                  </p>
+                  {!(selectedAluno.bolsista || selectedAluno.bolsista_a2) && (
+                    <p className="text-xs text-slate-500 mt-2">
+                      Vencimento sugerido: Dia 10
+                    </p>
+                  )}
                 </div>
 
                 <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 shadow-sm">
@@ -408,7 +441,7 @@ export default function Alunos() {
 
       {/* Modal de Formulário (Criação/Edição) */}
       {showForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 animate-fadeIn">
           <div className="bg-white rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6">
             <h3 className="text-xl font-bold mb-6">
               {editMode ? 'Editar Aluno' : 'Novo Aluno'}
@@ -478,7 +511,6 @@ export default function Alunos() {
                       <option value="Verde/Preta">Verde/Preta</option>
                     </optgroup>
                     <optgroup label="Adulto (16+)">
-                      <option value="Azul">Branca</option>
                       <option value="Azul">Azul</option>
                       <option value="Roxa">Roxa</option>
                       <option value="Marrom">Marrom</option>
@@ -498,6 +530,58 @@ export default function Alunos() {
                     <option value="Inadimplente">Inadimplente (Devendo)</option>
                   </select>
                 </div>
+              </div>
+
+              {/* NOVA SEÇÃO DE CLASSIFICAÇÕES (Botões clicáveis) */}
+              <div className="border-t pt-4 mt-4">
+                 <h4 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
+                    <Award size={18} className="text-yellow-500" /> Classificação & Bolsas
+                 </h4>
+                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 select-none">
+                    
+                    {/* Botão Competidor */}
+                    <div 
+                        onClick={() => setFormData({...formData, competidor: !formData.competidor})}
+                        className={`p-3 rounded-lg border cursor-pointer transition-all flex items-center gap-3 hover:shadow-sm ${
+                        formData.competidor ? 'bg-yellow-50 border-yellow-400 shadow-sm' : 'bg-white border-slate-200 hover:border-slate-300'
+                    }`}>
+                        <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${
+                            formData.competidor ? 'bg-yellow-500 border-yellow-600' : 'bg-white border-slate-300'
+                        }`}>
+                            {formData.competidor && <Trophy size={12} className="text-white" />}
+                        </div>
+                        <span className={`text-sm font-medium ${formData.competidor ? 'text-yellow-800' : 'text-slate-600'}`}>Competidor</span>
+                    </div>
+
+                    {/* Botão Bolsista Academia */}
+                    <div 
+                        onClick={() => setFormData({...formData, bolsista: !formData.bolsista})}
+                        className={`p-3 rounded-lg border cursor-pointer transition-all flex items-center gap-3 hover:shadow-sm ${
+                        formData.bolsista ? 'bg-green-50 border-green-400 shadow-sm' : 'bg-white border-slate-200 hover:border-slate-300'
+                    }`}>
+                        <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${
+                            formData.bolsista ? 'bg-green-500 border-green-600' : 'bg-white border-slate-300'
+                        }`}>
+                            {formData.bolsista && <Award size={12} className="text-white" />}
+                        </div>
+                        <span className={`text-sm font-medium ${formData.bolsista ? 'text-green-800' : 'text-slate-600'}`}>Bolsista Academia</span>
+                    </div>
+
+                    {/* Botão Bolsista A2 */}
+                    <div 
+                        onClick={() => setFormData({...formData, bolsista_a2: !formData.bolsista_a2})}
+                        className={`p-3 rounded-lg border cursor-pointer transition-all flex items-center gap-3 hover:shadow-sm ${
+                        formData.bolsista_a2 ? 'bg-purple-50 border-purple-400 shadow-sm' : 'bg-white border-slate-200 hover:border-slate-300'
+                    }`}>
+                        <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${
+                            formData.bolsista_a2 ? 'bg-purple-500 border-purple-600' : 'bg-white border-slate-300'
+                        }`}>
+                            {formData.bolsista_a2 && <Star size={12} className="text-white" />}
+                        </div>
+                        <span className={`text-sm font-medium ${formData.bolsista_a2 ? 'text-purple-800' : 'text-slate-600'}`}>Bolsista A2</span>
+                    </div>
+
+                 </div>
               </div>
 
               <div className="border-t pt-4 mt-4">
