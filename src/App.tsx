@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { ToastProvider } from './contexts/ToastContext'; 
+import { ToastProvider } from './contexts/ToastContext';
 import Login from './components/Login';
 import Layout from './components/Layout';
 import Dashboard from './components/Dashboard';
@@ -11,10 +11,20 @@ import Configuracoes from './components/Configuracoes';
 import Totem from './components/Totem';
 
 function AppContent() {
-  const { isAuthenticated } = useAuth();
+  // Alterado para usar user e loading para verificar autenticação de forma segura
+  const { user, loading } = useAuth();
   const [currentPage, setCurrentPage] = useState('dashboard');
 
-  if (!isAuthenticated) {
+  // Mostra carregando enquanto verifica a sessão para não "piscar" a tela de login
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-slate-50">
+        <div className="text-slate-500 font-medium animate-pulse">A carregar sistema...</div>
+      </div>
+    );
+  }
+
+  if (!user) {
     return <Login />;
   }
 
@@ -33,8 +43,9 @@ function AppContent() {
 function App() {
   return (
     <AuthProvider>
-      <AppContent />
-      <ToastProvider> {/* Adicionado para os alertas funcionarem */}
+      {/* CORREÇÃO: ToastProvider agora envolve o AppContent para que o contexto de alertas funcione em todas as telas */}
+      <ToastProvider>
+        <AppContent />
       </ToastProvider>
     </AuthProvider>
   );

@@ -14,7 +14,8 @@ interface ToastContextData {
   removeToast: (id: string) => void;
 }
 
-const ToastContext = createContext<ToastContextData>({} as ToastContextData);
+// Alterado para undefined para forçar o erro correto se não houver Provider
+const ToastContext = createContext<ToastContextData | undefined>(undefined);
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -23,6 +24,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     const id = Math.random().toString(36).substr(2, 9);
     setToasts((prev) => [...prev, { id, message, type }]);
 
+    // Auto remover após 3 segundos
     setTimeout(() => {
       removeToast(id);
     }, 3000);
