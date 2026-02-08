@@ -1,17 +1,18 @@
-import { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Plus, X, TrendingUp, TrendingDown } from 'lucide-react';
+import { Plus, TrendingUp, TrendingDown, DollarSign, Calendar, Trash2, HandCoins } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { useToast } from '../contexts/ToastContext';
 
 interface Transacao {
   id: string;
-  tipo: string;
-  categoria: string;
   descricao: string;
   valor: number;
+  tipo: 'Receita' | 'Despesa';
+  categoria: string;
   data: string;
-  tipo_aula_id: string | null;
+  tipo_aula_id?: string; // Importante para calcular a comissão
 }
 
 interface TipoAula {
@@ -19,671 +20,402 @@ interface TipoAula {
   nome: string;
 }
 
-interface Instrutor {
-  id: string;
-  nome: string;
-}
-
-interface RateioConfig {
-  id: string;
-  instrutor_id: string;
-  tipo_aula_id: string;
-  percentual: number;
-  instrutor?: { nome: string };
-  tipo_aula?: { nome: string };
-}
-
-const categoriasDespesas = [
-  'Aluguel',
-  'Energia',
-  'Internet',
-  'Água',
-  'Limpeza',
-  'Manutenção',
-  'Material Esportivo',
-  'Marketing',
-  'Outros',
-];
-
 export default function Financeiro() {
-  const [activeView, setActiveView] = useState<'transacoes' | 'rateio'>('transacoes');
+  const { addToast } = useToast();
   const [transacoes, setTransacoes] = useState<Transacao[]>([]);
   const [tiposAula, setTiposAula] = useState<TipoAula[]>([]);
-  const [instrutores, setInstrutores] = useState<Instrutor[]>([]);
-  const [rateios, setRateios] = useState<RateioConfig[]>([]);
-  const [showTransactionForm, setShowTransactionForm] = useState(false);
-  const [showRateioForm, setShowRateioForm] = useState(false);
-
-  const [transactionForm, setTransactionForm] = useState({
-    tipo: 'Receita',
-    categoria: '',
+  const [rateios, setRateios] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  
+  const [novaTransacao, setNovaTransacao] = useState({
     descricao: '',
     valor: '',
-    data: format(new Date(), 'yyyy-MM-dd'),
-    tipo_aula_id: '',
-  });
-
-  const [rateioForm, setRateioForm] = useState({
-    instrutor_id: '',
-    tipo_aula_id: '',
-    percentual: '',
+    tipo: 'Despesa',
+    categoria: 'Fixa',
+    data: new Date().toISOString().split('T')[0],
+    tipo_aula_id: ''
   });
 
   useEffect(() => {
-    loadData();
+    fetchDados();
+
+    const channel = supabase
+      .channel('financeiro_realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transacoes' }, () => fetchDados())
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
-  async function loadData() {
-    const [transacoesRes, tiposAulaRes, instrutoresRes, rateiosRes] = await Promise.all([
-      supabase.from('transacoes').select('*').order('data', { ascending: false }),
-      supabase.from('tipos_aula').select('*').order('nome'),
-      supabase.from('instrutores').select('*').order('nome'),
-      supabase
+  async function fetchDados() {
+    try {
+      setLoading(true);
+      // 1. Buscar Transações
+      const { data: transacoesData, error: transError } = await supabase
+        .from('transacoes')
+        .select('*')
+        .order('data', { ascending: false });
+      
+      if (transError) throw transError;
+
+      // 2. Buscar Regras de Comissões (Rateio)
+      const { data: rateiosData } = await supabase
         .from('rateio_config')
-        .select(`
-          *,
-          instrutor:instrutores(nome),
-          tipo_aula:tipos_aula(nome)
-        `),
-    ]);
+        .select('*');
 
-    if (transacoesRes.data) setTransacoes(transacoesRes.data);
-    if (tiposAulaRes.data) setTiposAula(tiposAulaRes.data);
-    if (instrutoresRes.data) setInstrutores(instrutoresRes.data);
-    if (rateiosRes.data) setRateios(rateiosRes.data as any);
+      // 3. Buscar Tipos de Aula (Para o formulário)
+      const { data: aulasData } = await supabase
+        .from('tipos_aula')
+        .select('id, nome')
+        .eq('ativo', true);
+
+      setTransacoes(transacoesData || []);
+      setRateios(rateiosData || []);
+      setTiposAula(aulasData || []);
+    } catch (error) {
+      console.error('Erro ao buscar dados:', error);
+      addToast('Erro ao carregar financeiro.', 'error');
+    } finally {
+      setLoading(false);
+    }
   }
 
-  async function handleTransactionSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    try {
+      const payload: any = {
+        descricao: novaTransacao.descricao,
+        valor: parseFloat(novaTransacao.valor),
+        tipo: novaTransacao.tipo,
+        categoria: novaTransacao.categoria,
+        data: novaTransacao.data
+      };
 
-    await supabase.from('transacoes').insert([
-      {
-        tipo: transactionForm.tipo,
-        categoria: transactionForm.categoria,
-        descricao: transactionForm.descricao,
-        valor: parseFloat(transactionForm.valor),
-        data: transactionForm.data,
-        tipo_aula_id: transactionForm.tipo_aula_id || null,
-      },
-    ]);
+      // Se for receita e tiver turma selecionada, adiciona o ID
+      if (novaTransacao.tipo === 'Receita' && novaTransacao.tipo_aula_id) {
+        payload.tipo_aula_id = novaTransacao.tipo_aula_id;
+      }
 
-    setShowTransactionForm(false);
-    setTransactionForm({
-      tipo: 'Receita',
-      categoria: '',
-      descricao: '',
-      valor: '',
-      data: format(new Date(), 'yyyy-MM-dd'),
-      tipo_aula_id: '',
-    });
-    loadData();
+      const { error } = await supabase.from('transacoes').insert([payload]);
+
+      if (error) throw error;
+
+      setShowForm(false);
+      setNovaTransacao({
+        descricao: '',
+        valor: '',
+        tipo: 'Despesa',
+        categoria: 'Fixa',
+        data: new Date().toISOString().split('T')[0],
+        tipo_aula_id: ''
+      });
+      
+      fetchDados();
+      addToast('Lançamento salvo com sucesso!', 'success');
+    } catch (error) {
+      console.error('Erro ao salvar:', error);
+      addToast('Erro ao salvar transação.', 'error');
+    }
   }
 
-  async function handleRateioSubmit(e: React.FormEvent) {
-    e.preventDefault();
-
-    await supabase.from('rateio_config').insert([
-      {
-        instrutor_id: rateioForm.instrutor_id,
-        tipo_aula_id: rateioForm.tipo_aula_id,
-        percentual: parseFloat(rateioForm.percentual),
-      },
-    ]);
-
-    setShowRateioForm(false);
-    setRateioForm({
-      instrutor_id: '',
-      tipo_aula_id: '',
-      percentual: '',
-    });
-    loadData();
+  async function handleDelete(id: string) {
+    if (!window.confirm('Tem certeza que deseja apagar este lançamento?')) return;
+    try {
+      const { error } = await supabase.from('transacoes').delete().eq('id', id);
+      if (error) throw error;
+      addToast('Lançamento removido.', 'success');
+    } catch (error) {
+      console.error('Erro ao deletar:', error);
+      addToast('Erro ao remover lançamento.', 'error');
+    }
   }
 
-  async function deleteRateio(id: string) {
-    await supabase.from('rateio_config').delete().eq('id', id);
-    loadData();
-  }
+  // --- CÁLCULOS FINANCEIROS ---
+  let totalReceitas = 0;
+  let totalDespesas = 0;
+  let totalComissoes = 0;
 
-  function calculateRateioReport() {
-    const currentMonth = new Date().getMonth() + 1;
-    const currentYear = new Date().getFullYear();
+  transacoes.forEach((t) => {
+    const valor = Number(t.valor);
 
-    const monthlyTransactions = transacoes.filter((t) => {
-      const tDate = new Date(t.data);
-      return (
-        t.tipo === 'Receita' &&
-        t.tipo_aula_id &&
-        tDate.getMonth() + 1 === currentMonth &&
-        tDate.getFullYear() === currentYear
-      );
-    });
+    if (t.tipo === 'Receita') {
+      totalReceitas += valor;
 
-    const report: {
-      tipo_aula: string;
-      receita: number;
-      instrutor: string;
-      comissao: number;
-      lucro: number;
-    }[] = [];
-
-    tiposAula.forEach((tipoAula) => {
-      const rateioConfig = rateios.find((r) => r.tipo_aula_id === tipoAula.id);
-      const receita = monthlyTransactions
-        .filter((t) => t.tipo_aula_id === tipoAula.id)
-        .reduce((sum, t) => sum + t.valor, 0);
-
-      if (receita > 0) {
-        const comissao = rateioConfig ? (receita * rateioConfig.percentual) / 100 : 0;
-        const lucro = receita - comissao;
-
-        report.push({
-          tipo_aula: tipoAula.nome,
-          receita,
-          instrutor: rateioConfig?.instrutor?.nome || '-',
-          comissao,
-          lucro,
+      // Calcular Comissão se houver turma vinculada
+      if (t.tipo_aula_id && rateios.length > 0) {
+        const regras = rateios.filter((r: any) => r.tipo_aula_id === t.tipo_aula_id);
+        regras.forEach((r: any) => {
+          const comissao = valor * (Number(r.percentual) / 100);
+          totalComissoes += comissao;
         });
       }
-    });
+    } else {
+      totalDespesas += valor;
+    }
+  });
 
-    return report;
-  }
-
-  const totals = transacoes.reduce(
-    (acc, t) => {
-      if (t.tipo === 'Receita') {
-        acc.receitas += t.valor;
-      } else {
-        acc.despesas += t.valor;
-      }
-      return acc;
-    },
-    { receitas: 0, despesas: 0 }
-  );
+  // Saldo Líquido = Receitas - Despesas - Comissões
+  const saldo = totalReceitas - totalDespesas - totalComissoes;
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-3xl font-bold text-gray-800">Financeiro</h1>
+    <div className="space-y-6 animate-fadeIn">
+      <div className="flex justify-between items-center">
+        <h2 className="text-2xl font-bold text-slate-800">Financeiro</h2>
+        <button
+          onClick={() => setShowForm(true)}
+          className="bg-slate-900 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-slate-800 transition-colors"
+        >
+          <Plus size={20} />
+          Novo Lançamento
+        </button>
       </div>
 
-      <div className="grid grid-cols-3 gap-6 mb-6">
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-gray-600 text-sm">Total Receitas</p>
-            <TrendingUp className="w-5 h-5 text-green-600" />
-          </div>
-          <p className="text-2xl font-bold text-green-600">R$ {totals.receitas.toFixed(2)}</p>
-        </div>
-
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-gray-600 text-sm">Total Despesas</p>
-            <TrendingDown className="w-5 h-5 text-red-600" />
-          </div>
-          <p className="text-2xl font-bold text-red-600">R$ {totals.despesas.toFixed(2)}</p>
-        </div>
-
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-gray-600 text-sm">Saldo</p>
-          </div>
-          <p
-            className={`text-2xl font-bold ${
-              totals.receitas - totals.despesas >= 0 ? 'text-blue-600' : 'text-red-600'
-            }`}
-          >
-            R$ {(totals.receitas - totals.despesas).toFixed(2)}
-          </p>
-        </div>
-      </div>
-
-      <div className="bg-white rounded-lg shadow mb-6">
-        <div className="border-b border-gray-200">
-          <nav className="flex">
-            <button
-              onClick={() => setActiveView('transacoes')}
-              className={`px-6 py-4 font-medium ${
-                activeView === 'transacoes'
-                  ? 'border-b-2 border-blue-600 text-blue-600'
-                  : 'text-gray-600 hover:text-gray-800'
-              }`}
-            >
-              Transações
-            </button>
-            <button
-              onClick={() => setActiveView('rateio')}
-              className={`px-6 py-4 font-medium ${
-                activeView === 'rateio'
-                  ? 'border-b-2 border-blue-600 text-blue-600'
-                  : 'text-gray-600 hover:text-gray-800'
-              }`}
-            >
-              Comissões (Rateio)
-            </button>
-          </nav>
-        </div>
-
-        {activeView === 'transacoes' && (
-          <div className="p-6">
-            <div className="flex justify-end mb-4">
-              <button
-                onClick={() => setShowTransactionForm(!showTransactionForm)}
-                className="flex items-center space-x-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium"
-              >
-                <Plus className="w-5 h-5" />
-                <span>Nova Transação</span>
-              </button>
+      {/* Cards de Resumo - Agora com 4 Colunas */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Entradas */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+          <div className="flex justify-between items-center mb-2">
+            <span className="text-slate-500 font-medium">Entradas Brutas</span>
+            <div className="p-2 bg-green-100 rounded-lg">
+              <TrendingUp className="text-green-600" size={20} />
             </div>
+          </div>
+          <h3 className="text-2xl font-bold text-green-600">
+            R$ {totalReceitas.toFixed(2)}
+          </h3>
+        </div>
 
-            {showTransactionForm && (
-              <div className="bg-gray-50 rounded-lg p-6 mb-6">
-                <form onSubmit={handleTransactionSubmit} className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Tipo *
-                      </label>
-                      <select
-                        value={transactionForm.tipo}
-                        onChange={(e) =>
-                          setTransactionForm({ ...transactionForm, tipo: e.target.value })
-                        }
-                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                        required
-                      >
-                        <option value="Receita">Receita</option>
-                        <option value="Despesa">Despesa</option>
-                      </select>
-                    </div>
+        {/* Saídas */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+          <div className="flex justify-between items-center mb-2">
+            <span className="text-slate-500 font-medium">Despesas Operacionais</span>
+            <div className="p-2 bg-red-100 rounded-lg">
+              <TrendingDown className="text-red-600" size={20} />
+            </div>
+          </div>
+          <h3 className="text-2xl font-bold text-red-600">
+            R$ {totalDespesas.toFixed(2)}
+          </h3>
+        </div>
 
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Categoria *
-                      </label>
-                      {transactionForm.tipo === 'Despesa' ? (
-                        <select
-                          value={transactionForm.categoria}
-                          onChange={(e) =>
-                            setTransactionForm({ ...transactionForm, categoria: e.target.value })
-                          }
-                          className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                          required
-                        >
-                          <option value="">Selecione...</option>
-                          {categoriasDespesas.map((cat) => (
-                            <option key={cat} value={cat}>
-                              {cat}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <input
-                          type="text"
-                          value={transactionForm.categoria}
-                          onChange={(e) =>
-                            setTransactionForm({ ...transactionForm, categoria: e.target.value })
-                          }
-                          className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                          placeholder="Ex: Mensalidade"
-                          required
-                        />
-                      )}
-                    </div>
-                  </div>
+        {/* Comissões (NOVO) */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+          <div className="flex justify-between items-center mb-2">
+            <span className="text-slate-500 font-medium">Repasse Instrutores</span>
+            <div className="p-2 bg-orange-100 rounded-lg">
+              <HandCoins className="text-orange-600" size={20} />
+            </div>
+          </div>
+          <h3 className="text-2xl font-bold text-orange-600">
+            R$ {totalComissoes.toFixed(2)}
+          </h3>
+          <p className="text-xs text-slate-400 mt-1">Descontado do saldo</p>
+        </div>
 
-                  {transactionForm.tipo === 'Receita' && (
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Tipo de Aula (opcional)
-                      </label>
-                      <select
-                        value={transactionForm.tipo_aula_id}
-                        onChange={(e) =>
-                          setTransactionForm({ ...transactionForm, tipo_aula_id: e.target.value })
-                        }
-                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                      >
-                        <option value="">Nenhum</option>
-                        {tiposAula.map((tipo) => (
-                          <option key={tipo.id} value={tipo.id}>
-                            {tipo.nome}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
+        {/* Saldo Real */}
+        <div className={`bg-white p-6 rounded-xl shadow-sm border-l-4 ${saldo >= 0 ? 'border-blue-500' : 'border-red-500'}`}>
+          <div className="flex justify-between items-center mb-2">
+            <span className="text-slate-500 font-medium">Lucro Líquido</span>
+            <div className="p-2 bg-slate-100 rounded-lg">
+              <DollarSign className="text-slate-600" size={20} />
+            </div>
+          </div>
+          <h3 className={`text-2xl font-bold ${saldo >= 0 ? 'text-blue-900' : 'text-red-600'}`}>
+            R$ {saldo.toFixed(2)}
+          </h3>
+          <p className="text-xs text-slate-400 mt-1">Após comissões</p>
+        </div>
+      </div>
 
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Descrição
-                    </label>
-                    <input
-                      type="text"
-                      value={transactionForm.descricao}
-                      onChange={(e) =>
-                        setTransactionForm({ ...transactionForm, descricao: e.target.value })
-                      }
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Valor (R$) *
-                      </label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={transactionForm.valor}
-                        onChange={(e) =>
-                          setTransactionForm({ ...transactionForm, valor: e.target.value })
-                        }
-                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                        required
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Data *
-                      </label>
-                      <input
-                        type="date"
-                        value={transactionForm.data}
-                        onChange={(e) =>
-                          setTransactionForm({ ...transactionForm, data: e.target.value })
-                        }
-                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex justify-end space-x-4">
-                    <button
-                      type="button"
-                      onClick={() => setShowTransactionForm(false)}
-                      className="px-6 py-3 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+      {/* Lista de Transações */}
+      <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+        <div className="p-4 border-b border-slate-100 font-semibold text-slate-700">
+          Histórico de Movimentações
+        </div>
+        
+        {loading ? (
+          <div className="p-8 text-center text-slate-500">Carregando financeiro...</div>
+        ) : transacoes.length === 0 ? (
+          <div className="p-8 text-center text-slate-500">Nenhuma movimentação registrada.</div>
+        ) : (
+          <table className="w-full text-left">
+            <thead className="bg-slate-50 text-slate-600 text-sm">
+              <tr>
+                <th className="p-4">Data</th>
+                <th className="p-4">Descrição</th>
+                <th className="p-4">Categoria</th>
+                <th className="p-4 text-right">Valor</th>
+                <th className="p-4 text-right">Ações</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {transacoes.map((t) => (
+                <tr key={t.id} className="hover:bg-slate-50">
+                  <td className="p-4 text-slate-600 flex items-center gap-2">
+                    <Calendar size={16} />
+                    {format(new Date(t.data), 'dd/MM/yyyy')}
+                  </td>
+                  <td className="p-4 font-medium text-slate-900">
+                    {t.descricao}
+                    {t.tipo === 'Receita' && t.tipo_aula_id && (
+                       <span className="ml-2 text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">
+                         Comissionado
+                       </span>
+                    )}
+                  </td>
+                  <td className="p-4">
+                    <span className="px-2 py-1 bg-slate-100 text-slate-600 rounded text-xs">
+                      {t.categoria}
+                    </span>
+                  </td>
+                  <td className={`p-4 text-right font-bold ${t.tipo === 'Receita' ? 'text-green-600' : 'text-red-600'}`}>
+                    {t.tipo === 'Receita' ? '+' : '-'} R$ {Number(t.valor).toFixed(2)}
+                  </td>
+                  <td className="p-4 text-right">
+                    <button 
+                      onClick={() => handleDelete(t.id)}
+                      className="text-slate-400 hover:text-red-600 p-1"
                     >
-                      Cancelar
+                      <Trash2 size={18} />
                     </button>
-                    <button
-                      type="submit"
-                      className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg"
-                    >
-                      Adicionar
-                    </button>
-                  </div>
-                </form>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Modal Nova Transação */}
+      {showForm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl w-full max-w-md p-6">
+            <h3 className="text-xl font-bold mb-4">Novo Lançamento</h3>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Tipo</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setNovaTransacao({...novaTransacao, tipo: 'Receita'})}
+                    className={`p-2 rounded-lg border font-medium ${
+                      novaTransacao.tipo === 'Receita' 
+                        ? 'bg-green-50 border-green-500 text-green-700' 
+                        : 'border-slate-200 text-slate-500'
+                    }`}
+                  >
+                    Receita
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNovaTransacao({...novaTransacao, tipo: 'Despesa'})}
+                    className={`p-2 rounded-lg border font-medium ${
+                      novaTransacao.tipo === 'Despesa' 
+                        ? 'bg-red-50 border-red-500 text-red-700' 
+                        : 'border-slate-200 text-slate-500'
+                    }`}
+                  >
+                    Despesa
+                  </button>
+                </div>
               </div>
-            )}
 
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">
-                      Data
-                    </th>
-                    <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">
-                      Tipo
-                    </th>
-                    <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">
-                      Categoria
-                    </th>
-                    <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">
-                      Descrição
-                    </th>
-                    <th className="px-6 py-3 text-right text-sm font-semibold text-gray-700">
-                      Valor
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200">
-                  {transacoes.map((transacao) => (
-                    <tr key={transacao.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 text-sm text-gray-600">
-                        {format(new Date(transacao.data), 'dd/MM/yyyy')}
-                      </td>
-                      <td className="px-6 py-4">
-                        <span
-                          className={`px-3 py-1 rounded-full text-sm font-medium ${
-                            transacao.tipo === 'Receita'
-                              ? 'bg-green-100 text-green-700'
-                              : 'bg-red-100 text-red-700'
-                          }`}
-                        >
-                          {transacao.tipo}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-sm text-gray-600">{transacao.categoria}</td>
-                      <td className="px-6 py-4 text-sm text-gray-600">{transacao.descricao}</td>
-                      <td className="px-6 py-4 text-sm text-right font-semibold">
-                        <span
-                          className={
-                            transacao.tipo === 'Receita' ? 'text-green-600' : 'text-red-600'
-                          }
-                        >
-                          {transacao.tipo === 'Receita' ? '+' : '-'} R${' '}
-                          {transacao.valor.toFixed(2)}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {transacoes.length === 0 && (
-                <div className="text-center py-12 text-gray-500">
-                  Nenhuma transação cadastrada
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Descrição</label>
+                <input
+                  type="text"
+                  required
+                  className="w-full p-2 border rounded-lg"
+                  placeholder="Ex: Conta de Luz, Mensalidade..."
+                  value={novaTransacao.descricao}
+                  onChange={e => setNovaTransacao({...novaTransacao, descricao: e.target.value})}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Valor (R$)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    required
+                    className="w-full p-2 border rounded-lg"
+                    value={novaTransacao.valor}
+                    onChange={e => setNovaTransacao({...novaTransacao, valor: e.target.value})}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Data</label>
+                  <input
+                    type="date"
+                    required
+                    className="w-full p-2 border rounded-lg"
+                    value={novaTransacao.data}
+                    onChange={e => setNovaTransacao({...novaTransacao, data: e.target.value})}
+                  />
+                </div>
+              </div>
+
+              {/* SELEÇÃO DE TURMA (Apenas para Receita) */}
+              {novaTransacao.tipo === 'Receita' && (
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Turma / Origem (Opcional)</label>
+                  <select
+                    className="w-full p-2 border rounded-lg bg-white"
+                    value={novaTransacao.tipo_aula_id}
+                    onChange={e => setNovaTransacao({...novaTransacao, tipo_aula_id: e.target.value})}
+                  >
+                    <option value="">Sem Turma Específica</option>
+                    {tiposAula.map(aula => (
+                      <option key={aula.id} value={aula.id}>{aula.nome}</option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-slate-500 mt-1">Selecione para calcular comissão do professor.</p>
                 </div>
               )}
-            </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Categoria</label>
+                <select
+                  className="w-full p-2 border rounded-lg bg-white"
+                  value={novaTransacao.categoria}
+                  onChange={e => setNovaTransacao({...novaTransacao, categoria: e.target.value})}
+                >
+                  <optgroup label="Despesas">
+                    <option value="Fixa">Fixa (Luz, Água, Aluguel)</option>
+                    <option value="Variável">Variável (Manutenção, Limpeza)</option>
+                    <option value="Pessoal">Pagamento Pessoal</option>
+                  </optgroup>
+                  <optgroup label="Receitas">
+                    <option value="Mensalidade">Mensalidade</option>
+                    <option value="Venda">Venda de Produtos</option>
+                    <option value="Outro">Outros</option>
+                  </optgroup>
+                </select>
+              </div>
+
+              <div className="flex justify-end gap-3 mt-6 pt-4 border-t">
+                <button
+                  type="button"
+                  onClick={() => setShowForm(false)}
+                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800"
+                >
+                  Salvar
+                </button>
+              </div>
+            </form>
           </div>
-        )}
-
-        {activeView === 'rateio' && (
-          <div className="p-6">
-            <div className="flex justify-end mb-4">
-              <button
-                onClick={() => setShowRateioForm(!showRateioForm)}
-                className="flex items-center space-x-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium"
-              >
-                <Plus className="w-5 h-5" />
-                <span>Nova Configuração</span>
-              </button>
-            </div>
-
-            {showRateioForm && (
-              <div className="bg-gray-50 rounded-lg p-6 mb-6">
-                <form onSubmit={handleRateioSubmit} className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Instrutor *
-                    </label>
-                    <select
-                      value={rateioForm.instrutor_id}
-                      onChange={(e) =>
-                        setRateioForm({ ...rateioForm, instrutor_id: e.target.value })
-                      }
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                      required
-                    >
-                      <option value="">Selecione...</option>
-                      {instrutores.map((instrutor) => (
-                        <option key={instrutor.id} value={instrutor.id}>
-                          {instrutor.nome}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Tipo de Aula *
-                    </label>
-                    <select
-                      value={rateioForm.tipo_aula_id}
-                      onChange={(e) =>
-                        setRateioForm({ ...rateioForm, tipo_aula_id: e.target.value })
-                      }
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                      required
-                    >
-                      <option value="">Selecione...</option>
-                      {tiposAula.map((tipo) => (
-                        <option key={tipo.id} value={tipo.id}>
-                          {tipo.nome}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Percentual de Comissão (%) *
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      max="100"
-                      value={rateioForm.percentual}
-                      onChange={(e) =>
-                        setRateioForm({ ...rateioForm, percentual: e.target.value })
-                      }
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                      required
-                    />
-                  </div>
-
-                  <div className="flex justify-end space-x-4">
-                    <button
-                      type="button"
-                      onClick={() => setShowRateioForm(false)}
-                      className="px-6 py-3 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
-                    >
-                      Cancelar
-                    </button>
-                    <button
-                      type="submit"
-                      className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg"
-                    >
-                      Adicionar
-                    </button>
-                  </div>
-                </form>
-              </div>
-            )}
-
-            <div className="mb-8">
-              <h3 className="text-lg font-semibold text-gray-800 mb-4">
-                Configurações de Comissão
-              </h3>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">
-                        Instrutor
-                      </th>
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">
-                        Tipo de Aula
-                      </th>
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">
-                        Percentual
-                      </th>
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">
-                        Ações
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-200">
-                    {rateios.map((rateio) => (
-                      <tr key={rateio.id} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 text-sm text-gray-800">
-                          {rateio.instrutor?.nome}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-800">
-                          {rateio.tipo_aula?.nome}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-800">
-                          {rateio.percentual}%
-                        </td>
-                        <td className="px-6 py-4">
-                          <button
-                            onClick={() => deleteRateio(rateio.id)}
-                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
-                          >
-                            <X className="w-5 h-5" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {rateios.length === 0 && (
-                  <div className="text-center py-12 text-gray-500">
-                    Nenhuma configuração cadastrada
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div>
-              <h3 className="text-lg font-semibold text-gray-800 mb-4">
-                Relatório de Comissões (Mês Atual)
-              </h3>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">
-                        Tipo de Aula
-                      </th>
-                      <th className="px-6 py-3 text-right text-sm font-semibold text-gray-700">
-                        Receita Total
-                      </th>
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-700">
-                        Instrutor
-                      </th>
-                      <th className="px-6 py-3 text-right text-sm font-semibold text-gray-700">
-                        Comissão
-                      </th>
-                      <th className="px-6 py-3 text-right text-sm font-semibold text-gray-700">
-                        Lucro Academia
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-200">
-                    {calculateRateioReport().map((item, index) => (
-                      <tr key={index} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 text-sm text-gray-800">{item.tipo_aula}</td>
-                        <td className="px-6 py-4 text-sm text-right font-semibold text-gray-800">
-                          R$ {item.receita.toFixed(2)}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-800">{item.instrutor}</td>
-                        <td className="px-6 py-4 text-sm text-right font-semibold text-orange-600">
-                          R$ {item.comissao.toFixed(2)}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-right font-semibold text-green-600">
-                          R$ {item.lucro.toFixed(2)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {calculateRateioReport().length === 0 && (
-                  <div className="text-center py-12 text-gray-500">
-                    Nenhuma receita com tipo de aula cadastrada este mês
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
