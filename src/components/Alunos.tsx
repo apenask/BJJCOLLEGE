@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Plus, Search, Edit, Trash2, User, AlertCircle, Cake, X, DollarSign, Activity, Trophy, Award, Star } from 'lucide-react';
-import { format } from 'date-fns';
+import { Plus, Search, Edit, Trash2, User, AlertCircle, Cake, X, Activity, Trophy, Award, Star, CalendarCheck, Clock, AlertTriangle, QrCode, Download } from 'lucide-react';
+import { format, differenceInDays, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { useToast } from '../contexts/ToastContext';
+import QRCode from 'react-qr-code';
 
 interface Aluno {
   id: string;
@@ -20,14 +22,15 @@ interface Aluno {
   neurodivergente: boolean;
   detalhes_condicao: string;
   gatilhos_cuidados: string;
-  // Campos novos (Visual)
   competidor?: boolean;
   bolsista?: boolean;
   bolsista_a2?: boolean;
   created_at: string;
+  ultimo_treino?: string; 
 }
 
 export default function Alunos() {
+  const { addToast } = useToast();
   const [alunos, setAlunos] = useState<Aluno[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -35,27 +38,72 @@ export default function Alunos() {
   
   const [selectedAluno, setSelectedAluno] = useState<Aluno | null>(null);
   const [dividaTotal, setDividaTotal] = useState(0);
+  const [showQRCode, setShowQRCode] = useState<Aluno | null>(null);
 
   const [formData, setFormData] = useState<Partial<Aluno>>({});
   const [editMode, setEditMode] = useState(false);
 
   useEffect(() => {
     fetchAlunos();
+
+    const channel = supabase
+      .channel('alunos_realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'alunos' }, () => fetchAlunos())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'presencas' }, () => fetchAlunos())
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   async function fetchAlunos() {
     try {
       const { data, error } = await supabase
         .from('alunos')
-        .select('*')
+        .select(`
+          *,
+          presencas (data_aula)
+        `)
         .order('nome');
       
       if (error) throw error;
-      setAlunos(data || []);
+
+      const alunosComPresenca = data?.map((aluno: any) => {
+        let ultimaData = null;
+        if (aluno.presencas && aluno.presencas.length > 0) {
+          const datasOrdenadas = aluno.presencas.sort((a: any, b: any) => 
+            new Date(b.data_aula).getTime() - new Date(a.data_aula).getTime()
+          );
+          ultimaData = datasOrdenadas[0].data_aula;
+        }
+        return { ...aluno, ultimo_treino: ultimaData };
+      });
+
+      setAlunos(alunosComPresenca || []);
     } catch (error) {
       console.error('Erro ao buscar alunos:', error);
+      addToast('Erro ao carregar lista de alunos.', 'error');
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleCheckIn(e: React.MouseEvent, alunoId: string, nomeAluno: string) {
+    e.stopPropagation();
+    if (!window.confirm(`Confirmar presença de hoje para ${nomeAluno}?`)) return;
+
+    try {
+      const { error } = await supabase.from('presencas').insert([{
+        aluno_id: alunoId,
+        data_aula: new Date().toISOString()
+      }]);
+
+      if (error) throw error;
+      addToast(`Presença confirmada para ${nomeAluno}! 🥋`, 'success');
+    } catch (error) {
+      console.error('Erro ao marcar presença:', error);
+      addToast('Erro ao marcar presença.', 'error');
     }
   }
 
@@ -79,8 +127,9 @@ export default function Alunos() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     try {
-      // Removemos campos undefined para evitar erro se a coluna não existir
-      const payload = { ...formData };
+      // Removemos campos calculados ou relations que não existem na tabela 'alunos'
+      // ATENÇÃO: É crucial remover 'ultimo_treino' e 'presencas' pois eles não são colunas reais
+      const { ultimo_treino, presencas, ...payload } = formData as any;
       
       if (editMode && formData.id) {
         const { error } = await supabase
@@ -88,31 +137,47 @@ export default function Alunos() {
           .update(payload)
           .eq('id', formData.id);
         if (error) throw error;
+        addToast('Aluno atualizado com sucesso!', 'success');
+        setShowForm(false);
       } else {
-        const { error } = await supabase
+        // Para novos alunos, usamos insert().select().single() para obter o ID gerado
+        const { data, error } = await supabase
           .from('alunos')
-          .insert([payload]);
+          .insert([payload])
+          .select()
+          .single();
+          
         if (error) throw error;
+        
+        addToast('Aluno cadastrado com sucesso!', 'success');
+        setShowForm(false);
+        
+        // Abre o QR Code automaticamente após cadastro, se os dados retornarem
+        if (data) {
+            setShowQRCode(data as Aluno);
+        }
       }
       
-      setShowForm(false);
       setFormData({});
       setEditMode(false);
+      // fetchAlunos é chamado pelo Realtime, mas chamamos aqui para garantir update local imediato
       fetchAlunos();
     } catch (error) {
       console.error('Erro ao salvar aluno:', error);
-      alert('Erro ao salvar: Verifique se o banco de dados tem as colunas novas criadas (competidor, bolsista, bolsista_a2).');
+      addToast('Erro ao salvar. Verifique se todos os campos obrigatórios estão preenchidos.', 'error');
     }
   }
 
   async function handleDelete(id: string) {
-    if (!confirm('Tem certeza que deseja excluir este aluno?')) return;
+    if (!window.confirm('Tem certeza que deseja excluir este aluno?')) return;
     try {
       const { error } = await supabase.from('alunos').delete().eq('id', id);
       if (error) throw error;
+      addToast('Aluno removido com sucesso.', 'success');
       fetchAlunos();
     } catch (error) {
       console.error('Erro ao excluir:', error);
+      addToast('Erro ao excluir aluno.', 'error');
     }
   }
 
@@ -126,13 +191,21 @@ export default function Alunos() {
            hoje.getMonth() === nascAjustado.getMonth();
   }
 
+  function getStatusPresenca(ultimoTreino?: string) {
+    if (!ultimoTreino) return { dias: null, label: 'Sem registro', color: 'bg-slate-100 text-slate-500' };
+    const dias = differenceInDays(new Date(), parseISO(ultimoTreino));
+    if (dias === 0) return { dias, label: 'Veio Hoje', color: 'bg-green-100 text-green-700' };
+    if (dias <= 7) return { dias, label: `${dias} dias atrás`, color: 'bg-blue-50 text-blue-600' };
+    if (dias <= 14) return { dias, label: `${dias} dias ausente`, color: 'bg-yellow-100 text-yellow-700' };
+    return { dias, label: `${dias} dias s/ treinar`, color: 'bg-red-100 text-red-700 font-bold' };
+  }
+
   const filteredAlunos = alunos.filter(aluno =>
     aluno.nome.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (
     <div className="space-y-6">
-      {/* Cabeçalho */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <h2 className="text-2xl font-bold text-slate-800">Alunos</h2>
         <button
@@ -148,7 +221,6 @@ export default function Alunos() {
         </button>
       </div>
 
-      {/* Barra de Busca */}
       <div className="relative">
         <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" size={20} />
         <input
@@ -160,7 +232,6 @@ export default function Alunos() {
         />
       </div>
 
-      {/* Lista de Alunos */}
       {loading ? (
         <div className="text-center py-8">Carregando...</div>
       ) : (
@@ -170,13 +241,15 @@ export default function Alunos() {
               <tr>
                 <th className="p-4 font-semibold text-slate-600">Aluno</th>
                 <th className="p-4 font-semibold text-slate-600 hidden sm:table-cell">Graduação</th>
-                <th className="p-4 font-semibold text-slate-600 hidden sm:table-cell">Status</th>
+                <th className="p-4 font-semibold text-slate-600">Frequência</th>
                 <th className="p-4 font-semibold text-slate-600 text-right">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredAlunos.map((aluno) => {
                 const aniversariante = isAniversariante(aluno.data_nascimento);
+                const statusPresenca = getStatusPresenca(aluno.ultimo_treino);
+
                 return (
                   <tr key={aluno.id} className="hover:bg-slate-50 transition-colors cursor-pointer" onClick={() => handleOpenDetails(aluno)}>
                     <td className="p-4">
@@ -203,8 +276,9 @@ export default function Alunos() {
                             )}
                           </div>
                           <div className="flex gap-1 mt-1 sm:hidden">
-                            {aluno.competidor && <Trophy size={14} className="text-yellow-500" />}
-                            {aluno.bolsista && <Award size={14} className="text-green-500" />}
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${statusPresenca.color}`}>
+                              {statusPresenca.label}
+                            </span>
                           </div>
                         </div>
                       </div>
@@ -214,14 +288,29 @@ export default function Alunos() {
                         {aluno.graduacao}
                       </span>
                     </td>
-                    <td className="p-4 hidden sm:table-cell">
-                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                        aluno.status === 'Ativo' 
-                          ? 'bg-green-100 text-green-700' 
-                          : 'bg-red-100 text-red-700'
-                      }`}>
-                        {aluno.status}
-                      </span>
+                    <td className="p-4">
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setShowQRCode(aluno); }}
+                          className="p-2 bg-slate-100 text-slate-600 hover:bg-slate-800 hover:text-white rounded-lg transition-colors"
+                          title="Ver QR Code"
+                        >
+                          <QrCode size={18} />
+                        </button>
+
+                        <button
+                          onClick={(e) => handleCheckIn(e, aluno.id, aluno.nome)}
+                          className="p-2 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-lg transition-colors"
+                          title="Marcar Presença Hoje"
+                        >
+                          <CalendarCheck size={18} />
+                        </button>
+                        
+                        <span className={`hidden sm:inline-flex px-2 py-1 rounded-full text-xs font-medium ${statusPresenca.color} items-center gap-1`}>
+                          {statusPresenca.dias !== null && statusPresenca.dias > 14 && <AlertTriangle size={12} />}
+                          {statusPresenca.label}
+                        </span>
+                      </div>
                     </td>
                     <td className="p-4 text-right">
                       <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
@@ -251,12 +340,71 @@ export default function Alunos() {
         </div>
       )}
 
-      {/* MODAL: Prontuário do Aluno (Visualização) */}
+      {/* MODAL QR CODE (CARTEIRINHA) */}
+      {showQRCode && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50 animate-fadeIn" onClick={() => setShowQRCode(null)}>
+          <div className="bg-white rounded-2xl flex flex-col items-center max-w-sm w-full overflow-hidden shadow-2xl" onClick={e => e.stopPropagation()}>
+            
+            {/* Topo da Carteirinha */}
+            <div className="bg-slate-900 w-full p-6 text-center">
+                <h3 className="text-xl font-bold text-white tracking-widest">BJJ COLLEGE</h3>
+                <p className="text-slate-400 text-xs uppercase tracking-wide mt-1">Carteira do Atleta</p>
+            </div>
+
+            <div className="p-8 flex flex-col items-center w-full bg-white relative">
+                {/* Faixa decorativa baseada na graduação (Simples) */}
+                <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-blue-500 to-purple-600"></div>
+
+                <div className="w-24 h-24 rounded-full border-4 border-white shadow-lg overflow-hidden -mt-16 mb-4 bg-slate-200 z-10">
+                  {showQRCode.foto_url ? (
+                    <img src={showQRCode.foto_url} alt={showQRCode.nome} className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center bg-slate-300 text-slate-500">
+                      <User size={40} />
+                    </div>
+                  )}
+                </div>
+
+                <h2 className="text-2xl font-bold text-slate-800 text-center leading-tight">{showQRCode.nome}</h2>
+                <span className="px-3 py-1 bg-slate-100 rounded-full text-sm font-semibold text-slate-600 mt-2 mb-6 border border-slate-200">
+                  {showQRCode.graduacao}
+                </span>
+                
+                {/* QR CODE */}
+                <div className="p-2 bg-white border-2 border-slate-900 rounded-lg">
+                  <QRCode
+                    value={showQRCode.id}
+                    size={180}
+                    style={{ height: "auto", maxWidth: "100%", width: "100%" }}
+                    viewBox={`0 0 256 256`}
+                  />
+                </div>
+                <p className="text-xs text-slate-400 mt-2 font-mono">{showQRCode.id.slice(0, 8)}...</p>
+            </div>
+            
+            <div className="bg-slate-50 w-full p-4 flex gap-2 border-t border-slate-100">
+              <button 
+                onClick={() => window.print()}
+                className="flex-1 py-2 bg-slate-900 text-white rounded-lg font-bold hover:bg-slate-800 flex items-center justify-center gap-2"
+              >
+                <Download size={18} /> Imprimir / Salvar
+              </button>
+              <button 
+                onClick={() => setShowQRCode(null)}
+                className="px-4 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg font-bold hover:bg-slate-50"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DETALHES */}
       {selectedAluno && !showForm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 animate-fadeIn">
           <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl">
-            {/* Header do Modal */}
-            <div className="relative h-40 bg-gradient-to-r from-blue-600 to-blue-800 p-6 flex items-end">
+             <div className="relative h-40 bg-gradient-to-r from-blue-600 to-blue-800 p-6 flex items-end">
               <button 
                 onClick={() => setSelectedAluno(null)}
                 className="absolute top-4 right-4 text-white/80 hover:text-white bg-black/20 rounded-full p-1"
@@ -276,155 +424,128 @@ export default function Alunos() {
                 </div>
                 <div className="mb-2">
                   <h3 className="text-2xl font-bold text-white shadow-sm">{selectedAluno.nome}</h3>
-                  <div className="flex flex-wrap gap-2 mt-2">
-                    <span className="px-2 py-0.5 bg-white/20 text-white rounded text-sm backdrop-blur-sm border border-white/30">
-                      {selectedAluno.graduacao}
-                    </span>
-                    {isAniversariante(selectedAluno.data_nascimento) && (
-                      <span className="px-2 py-0.5 bg-pink-500 text-white rounded text-sm flex items-center gap-1 shadow-sm">
-                        <Cake size={14} /> Aniversariante
-                      </span>
-                    )}
-                    
-                    {/* SELOS VISUAIS */}
-                    {selectedAluno.competidor && (
-                      <span className="px-2 py-0.5 bg-yellow-400 text-yellow-900 rounded text-sm flex items-center gap-1 shadow-sm font-bold">
-                        <Trophy size={14} /> Competidor
-                      </span>
-                    )}
-                    {selectedAluno.bolsista && (
-                      <span className="px-2 py-0.5 bg-green-500 text-white rounded text-sm flex items-center gap-1 shadow-sm">
-                        <Award size={14} /> Bolsista BJJ
-                      </span>
-                    )}
-                    {selectedAluno.bolsista_a2 && (
-                      <span className="px-2 py-0.5 bg-purple-500 text-white rounded text-sm flex items-center gap-1 shadow-sm">
-                        <Star size={14} /> Bolsista A2
-                      </span>
-                    )}
-                  </div>
+                  <button 
+                    onClick={() => { setSelectedAluno(null); setShowQRCode(selectedAluno); }}
+                    className="mt-2 bg-white/20 hover:bg-white/30 text-white px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1 backdrop-blur-sm transition-colors"
+                  >
+                    <QrCode size={14} /> Ver Carteirinha
+                  </button>
                 </div>
               </div>
             </div>
-
-            {/* Corpo do Modal */}
+            
             <div className="pt-12 p-6 space-y-6">
-              
-              {/* Card Financeiro */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className={`p-4 rounded-xl border-l-4 shadow-sm ${
-                  selectedAluno.status === 'Ativo' ? 'bg-green-50 border-green-500' : 'bg-red-50 border-red-500'
-                }`}>
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <p className="text-sm font-medium text-slate-600">Status da Mensalidade</p>
-                      <h4 className={`text-xl font-bold ${
-                        selectedAluno.status === 'Ativo' ? 'text-green-700' : 'text-red-700'
-                      }`}>
-                        {selectedAluno.status}
-                      </h4>
-                      {/* Aviso de Isenção */}
-                      {(selectedAluno.bolsista || selectedAluno.bolsista_a2) && (
-                         <span className="text-xs font-bold text-slate-500 uppercase mt-1 block">
-                           (Isento de Pagamento - Bolsista)
-                         </span>
-                      )}
-                    </div>
-                    <Activity className={selectedAluno.status === 'Ativo' ? 'text-green-500' : 'text-red-500'} />
-                  </div>
-                  {!(selectedAluno.bolsista || selectedAluno.bolsista_a2) && (
-                    <p className="text-xs text-slate-500 mt-2">
-                      Vencimento sugerido: Dia 10
-                    </p>
-                  )}
-                </div>
-
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 shadow-sm">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <p className="text-sm font-medium text-slate-600">Dívida na Cantina</p>
-                      <h4 className={`text-xl font-bold ${dividaTotal > 0 ? 'text-red-600' : 'text-slate-700'}`}>
-                        R$ {dividaTotal.toFixed(2).replace('.', ',')}
-                      </h4>
-                    </div>
-                    <DollarSign className="text-slate-400" />
-                  </div>
-                  <p className="text-xs text-slate-500 mt-2">
-                    Total em compras "Fiado"
-                  </p>
-                </div>
-              </div>
-
-              {/* Informações Pessoais */}
-              <div>
-                <h4 className="font-semibold text-slate-800 border-b pb-2 mb-3 flex items-center gap-2">
-                  <User size={18} className="text-blue-600" /> Dados Pessoais
-                </h4>
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div>
-                    <span className="block text-slate-500">Data de Nascimento</span>
-                    <span className="font-medium">
-                      {selectedAluno.data_nascimento ? format(new Date(selectedAluno.data_nascimento), "dd 'de' MMMM", { locale: ptBR }) : '-'}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="block text-slate-500">Peso</span>
-                    <span className="font-medium">{selectedAluno.peso} kg</span>
-                  </div>
-                  {selectedAluno.whatsapp && (
-                    <div className="col-span-2">
-                      <span className="block text-slate-500">Contato / WhatsApp</span>
-                      <span className="font-medium">{selectedAluno.whatsapp}</span>
-                    </div>
-                  )}
-                  {selectedAluno.nome_responsavel && (
-                    <div className="col-span-2 bg-blue-50 p-2 rounded-lg">
-                      <span className="block text-blue-600 text-xs font-bold uppercase">Responsável</span>
-                      <span className="font-medium text-blue-900">
-                        {selectedAluno.nome_responsavel} ({selectedAluno.parentesco})
-                      </span>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Saúde e Inclusão */}
-              {(selectedAluno.alergias || selectedAluno.neurodivergente || selectedAluno.tipo_sanguineo) && (
-                <div>
-                  <h4 className="font-semibold text-slate-800 border-b pb-2 mb-3 flex items-center gap-2">
-                    <AlertCircle size={18} className="text-red-500" /> Saúde e Cuidados
-                  </h4>
-                  <div className="space-y-3 text-sm">
-                    {selectedAluno.tipo_sanguineo && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className={`p-4 rounded-xl border-l-4 shadow-sm ${
+                    selectedAluno.status === 'Ativo' ? 'bg-green-50 border-green-500' : 'bg-red-50 border-red-500'
+                  }`}>
+                    <div className="flex justify-between items-start">
                       <div>
-                        <span className="text-slate-500">Tipo Sanguíneo: </span>
-                        <span className="font-bold bg-red-100 text-red-700 px-2 rounded-full">{selectedAluno.tipo_sanguineo}</span>
-                      </div>
-                    )}
-                    
-                    {selectedAluno.alergias && (
-                      <div className="bg-red-50 p-3 rounded-lg border border-red-100">
-                        <span className="block text-red-600 font-bold mb-1">⚠️ Alergias & Medicamentos:</span>
-                        <p className="text-slate-700">{selectedAluno.alergias}</p>
-                      </div>
-                    )}
-
-                    {selectedAluno.neurodivergente && (
-                      <div className="bg-indigo-50 p-3 rounded-lg border border-indigo-100">
-                        <span className="block text-indigo-700 font-bold mb-1 flex items-center gap-2">
-                          🧩 Informações de Inclusão
-                        </span>
-                        <p className="text-slate-700 mb-2"><strong>Condição:</strong> {selectedAluno.detalhes_condicao}</p>
-                        {selectedAluno.gatilhos_cuidados && (
-                          <div className="text-slate-600 text-xs mt-2 pt-2 border-t border-indigo-200">
-                            <strong>Cuidados Especiais:</strong> {selectedAluno.gatilhos_cuidados}
-                          </div>
+                        <p className="text-sm font-medium text-slate-600">Status da Mensalidade</p>
+                        <h4 className={`text-xl font-bold ${
+                          selectedAluno.status === 'Ativo' ? 'text-green-700' : 'text-red-700'
+                        }`}>
+                          {selectedAluno.status}
+                        </h4>
+                        {(selectedAluno.bolsista || selectedAluno.bolsista_a2) && (
+                           <span className="text-xs font-bold text-slate-500 uppercase mt-1 block">
+                             (Isento de Pagamento - Bolsista)
+                           </span>
                         )}
                       </div>
+                      <Activity className={selectedAluno.status === 'Ativo' ? 'text-green-500' : 'text-red-500'} />
+                    </div>
+                    {!(selectedAluno.bolsista || selectedAluno.bolsista_a2) && (
+                      <p className="text-xs text-slate-500 mt-2">
+                        Vencimento sugerido: Dia 10
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 shadow-sm">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <p className="text-sm font-medium text-slate-600">Dívida na Cantina</p>
+                        <h4 className={`text-xl font-bold ${dividaTotal > 0 ? 'text-red-600' : 'text-slate-700'}`}>
+                          R$ {dividaTotal.toFixed(2).replace('.', ',')}
+                        </h4>
+                      </div>
+                      <DollarSign className="text-slate-400" />
+                    </div>
+                    <p className="text-xs text-slate-500 mt-2">
+                      Total em compras "Fiado"
+                    </p>
+                  </div>
+                </div>
+
+                <div>
+                  <h4 className="font-semibold text-slate-800 border-b pb-2 mb-3 flex items-center gap-2">
+                    <User size={18} className="text-blue-600" /> Dados Pessoais
+                  </h4>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="block text-slate-500">Data de Nascimento</span>
+                      <span className="font-medium">
+                        {selectedAluno.data_nascimento ? format(new Date(selectedAluno.data_nascimento), "dd 'de' MMMM", { locale: ptBR }) : '-'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="block text-slate-500">Peso</span>
+                      <span className="font-medium">{selectedAluno.peso} kg</span>
+                    </div>
+                    {selectedAluno.whatsapp && (
+                      <div className="col-span-2">
+                        <span className="block text-slate-500">Contato / WhatsApp</span>
+                        <span className="font-medium">{selectedAluno.whatsapp}</span>
+                      </div>
+                    )}
+                    {selectedAluno.nome_responsavel && (
+                      <div className="col-span-2 bg-blue-50 p-2 rounded-lg">
+                        <span className="block text-blue-600 text-xs font-bold uppercase">Responsável</span>
+                        <span className="font-medium text-blue-900">
+                          {selectedAluno.nome_responsavel} ({selectedAluno.parentesco})
+                        </span>
+                      </div>
                     )}
                   </div>
                 </div>
-              )}
+
+                {(selectedAluno.alergias || selectedAluno.neurodivergente || selectedAluno.tipo_sanguineo) && (
+                  <div>
+                    <h4 className="font-semibold text-slate-800 border-b pb-2 mb-3 flex items-center gap-2">
+                      <AlertCircle size={18} className="text-red-500" /> Saúde e Cuidados
+                    </h4>
+                    <div className="space-y-3 text-sm">
+                      {selectedAluno.tipo_sanguineo && (
+                        <div>
+                          <span className="text-slate-500">Tipo Sanguíneo: </span>
+                          <span className="font-bold bg-red-100 text-red-700 px-2 rounded-full">{selectedAluno.tipo_sanguineo}</span>
+                        </div>
+                      )}
+                      
+                      {selectedAluno.alergias && (
+                        <div className="bg-red-50 p-3 rounded-lg border border-red-100">
+                          <span className="block text-red-600 font-bold mb-1">⚠️ Alergias & Medicamentos:</span>
+                          <p className="text-slate-700">{selectedAluno.alergias}</p>
+                        </div>
+                      )}
+
+                      {selectedAluno.neurodivergente && (
+                        <div className="bg-indigo-50 p-3 rounded-lg border border-indigo-100">
+                          <span className="block text-indigo-700 font-bold mb-1 flex items-center gap-2">
+                            🧩 Informações de Inclusão
+                          </span>
+                          <p className="text-slate-700 mb-2"><strong>Condição:</strong> {selectedAluno.detalhes_condicao}</p>
+                          {selectedAluno.gatilhos_cuidados && (
+                            <div className="text-slate-600 text-xs mt-2 pt-2 border-t border-indigo-200">
+                              <strong>Cuidados Especiais:</strong> {selectedAluno.gatilhos_cuidados}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
             </div>
             
             <div className="p-4 bg-slate-50 border-t flex justify-end">
@@ -439,7 +560,6 @@ export default function Alunos() {
         </div>
       )}
 
-      {/* Modal de Formulário (Criação/Edição) */}
       {showForm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 animate-fadeIn">
           <div className="bg-white rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6">
@@ -532,14 +652,12 @@ export default function Alunos() {
                 </div>
               </div>
 
-              {/* NOVA SEÇÃO DE CLASSIFICAÇÕES (Botões clicáveis) */}
               <div className="border-t pt-4 mt-4">
                  <h4 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
                     <Award size={18} className="text-yellow-500" /> Classificação & Bolsas
                  </h4>
                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 select-none">
                     
-                    {/* Botão Competidor */}
                     <div 
                         onClick={() => setFormData({...formData, competidor: !formData.competidor})}
                         className={`p-3 rounded-lg border cursor-pointer transition-all flex items-center gap-3 hover:shadow-sm ${
@@ -553,7 +671,6 @@ export default function Alunos() {
                         <span className={`text-sm font-medium ${formData.competidor ? 'text-yellow-800' : 'text-slate-600'}`}>Competidor</span>
                     </div>
 
-                    {/* Botão Bolsista Academia */}
                     <div 
                         onClick={() => setFormData({...formData, bolsista: !formData.bolsista})}
                         className={`p-3 rounded-lg border cursor-pointer transition-all flex items-center gap-3 hover:shadow-sm ${
@@ -567,7 +684,6 @@ export default function Alunos() {
                         <span className={`text-sm font-medium ${formData.bolsista ? 'text-green-800' : 'text-slate-600'}`}>Bolsista Academia</span>
                     </div>
 
-                    {/* Botão Bolsista A2 */}
                     <div 
                         onClick={() => setFormData({...formData, bolsista_a2: !formData.bolsista_a2})}
                         className={`p-3 rounded-lg border cursor-pointer transition-all flex items-center gap-3 hover:shadow-sm ${

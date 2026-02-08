@@ -8,6 +8,7 @@ import Alunos from './components/Alunos';
 import Financeiro from './components/Financeiro';
 import Cantina from './components/Cantina';
 import Configuracoes from './components/Configuracoes';
+import Totem from './components/Totem';
 
 function AppContent() {
   const { isAuthenticated } = useAuth();
@@ -20,6 +21,7 @@ function AppContent() {
   return (
     <Layout currentPage={currentPage} onNavigate={setCurrentPage}>
       {currentPage === 'dashboard' && <Dashboard />}
+      {currentPage === 'totem' && <Totem />}
       {currentPage === 'alunos' && <Alunos />}
       {currentPage === 'financeiro' && <Financeiro />}
       {currentPage === 'cantina' && <Cantina />}

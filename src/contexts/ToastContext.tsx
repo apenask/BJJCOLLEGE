@@ -23,7 +23,6 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     const id = Math.random().toString(36).substr(2, 9);
     setToasts((prev) => [...prev, { id, message, type }]);
 
-    // Auto remover após 3 segundos
     setTimeout(() => {
       removeToast(id);
     }, 3000);
@@ -36,7 +35,6 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={{ addToast, removeToast }}>
       {children}
-      {/* Container de Toasts (Fica flutuando na tela) */}
       <div className="fixed top-4 right-4 z-50 flex flex-col gap-2">
         {toasts.map((toast) => (
           <div
@@ -53,9 +51,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             {toast.type === 'error' && <AlertCircle size={20} />}
             {toast.type === 'info' && <Info size={20} />}
             {toast.type === 'warning' && <AlertTriangle size={20} />}
-            
             <span className="flex-1 text-sm font-medium">{toast.message}</span>
-            
             <button onClick={() => removeToast(toast.id)} className="opacity-70 hover:opacity-100">
               <X size={18} />
             </button>
@@ -66,7 +62,6 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-// Hook personalizado para facilitar o uso
 export function useToast() {
   const context = useContext(ToastContext);
   if (!context) {
