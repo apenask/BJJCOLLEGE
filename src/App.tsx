@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { ToastProvider } from './contexts/ToastContext'; // Adicionado
 import Login from './components/Login';
 import Layout from './components/Layout';
 import Dashboard from './components/Dashboard';
@@ -31,6 +32,8 @@ function App() {
   return (
     <AuthProvider>
       <AppContent />
+      <ToastProvider> {/* Adicionado para os alertas funcionarem */}
+      </ToastProvider>
     </AuthProvider>
   );
 }

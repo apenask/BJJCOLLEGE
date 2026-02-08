@@ -1,161 +1,197 @@
-import { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { TrendingUp, TrendingDown, Users, DollarSign } from 'lucide-react';
+import { Users, TrendingUp, TrendingDown, DollarSign, Activity } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
-interface KPIData {
-  receitaMensal: number;
-  despesasMensal: number;
-  lucroLiquido: number;
-  totalAlunos: number;
-}
-
-interface RecentActivity {
-  id: string;
-  tipo: string;
-  descricao: string;
-  valor: number;
-  data: string;
-}
-
 export default function Dashboard() {
-  const [kpis, setKpis] = useState<KPIData>({
+  const [stats, setStats] = useState({
+    alunosAtivos: 0,
     receitaMensal: 0,
-    despesasMensal: 0,
-    lucroLiquido: 0,
-    totalAlunos: 0,
+    despesasMensais: 0,
+    lucro: 0
   });
-  const [recentActivities, setRecentActivities] = useState<RecentActivity[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadDashboardData();
+    fetchDashboardData();
+
+    // Configuração do Realtime (Escuta mudanças no banco)
+    const channel = supabase
+      .channel('dashboard_realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'alunos' }, () => fetchDashboardData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'vendas' }, () => fetchDashboardData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transacoes' }, () => fetchDashboardData())
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
-  async function loadDashboardData() {
-    const currentMonth = new Date().getMonth() + 1;
-    const currentYear = new Date().getFullYear();
+  async function fetchDashboardData() {
+    try {
+      const hoje = new Date();
+      const primeiroDiaMes = new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString();
 
-    const { data: transacoes } = await supabase
-      .from('transacoes')
-      .select('*')
-      .gte('data', `${currentYear}-${currentMonth.toString().padStart(2, '0')}-01`)
-      .order('data', { ascending: false });
+      // 1. Buscar Alunos Ativos
+      const { count: alunosCount } = await supabase
+        .from('alunos')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'Ativo');
 
-    const { data: alunos } = await supabase
-      .from('alunos')
-      .select('id, status');
+      // 2. Buscar Vendas (Loja) deste mês
+      const { data: vendas } = await supabase
+        .from('vendas')
+        .select('total')
+        .gte('data', primeiroDiaMes);
+      
+      const totalVendas = vendas?.reduce((acc, curr) => acc + Number(curr.total), 0) || 0;
 
-    let receitas = 0;
-    let despesas = 0;
+      // 3. Buscar Transações (Receitas e Despesas) deste mês
+      const { data: transacoes } = await supabase
+        .from('transacoes')
+        .select('valor, tipo')
+        .gte('data', primeiroDiaMes);
 
-    transacoes?.forEach((t) => {
-      if (t.tipo === 'Receita') {
-        receitas += Number(t.valor);
-      } else {
-        despesas += Number(t.valor);
-      }
-    });
+      let receitaTransacoes = 0;
+      let despesas = 0;
 
-    const totalAlunos = alunos?.filter((a) => a.status === 'Ativo').length || 0;
+      transacoes?.forEach(t => {
+        if (t.tipo === 'Receita') receitaTransacoes += Number(t.valor);
+        if (t.tipo === 'Despesa') despesas += Number(t.valor);
+      });
 
-    setKpis({
-      receitaMensal: receitas,
-      despesasMensal: despesas,
-      lucroLiquido: receitas - despesas,
-      totalAlunos,
-    });
+      // Receita Total = Vendas na Loja + Receitas Lançadas (Mensalidades etc)
+      const receitaTotal = totalVendas + receitaTransacoes;
 
-    setRecentActivities(
-      transacoes?.slice(0, 5).map((t) => ({
-        id: t.id,
-        tipo: t.tipo,
-        descricao: t.descricao || t.categoria,
-        valor: Number(t.valor),
-        data: t.data,
-      })) || []
-    );
+      setStats({
+        alunosAtivos: alunosCount || 0,
+        receitaMensal: receitaTotal,
+        despesasMensais: despesas,
+        lucro: receitaTotal - despesas
+      });
+
+    } catch (error) {
+      console.error('Erro ao carregar dashboard:', error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function formatMoney(value: number) {
+    return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  }
+
+  if (loading) {
+    return <div className="p-8 text-center text-slate-500">A carregar dados da academia...</div>;
   }
 
   return (
-    <div>
-      <h1 className="text-3xl font-bold text-gray-800 mb-8">Dashboard</h1>
+    <div className="space-y-6 animate-fadeIn">
+      <div className="flex justify-between items-center">
+        <h2 className="text-2xl font-bold text-slate-800">Painel Geral</h2>
+        <span className="text-sm text-slate-500 bg-slate-100 px-3 py-1 rounded-full">
+          {format(new Date(), "MMMM 'de' yyyy", { locale: ptBR })}
+        </span>
+      </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="p-3 bg-green-100 rounded-lg">
-              <TrendingUp className="w-6 h-6 text-green-600" />
+      {/* KPI Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        
+        {/* Card: Receita */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+          <div className="flex justify-between items-start mb-4">
+            <div>
+              <p className="text-sm font-medium text-slate-500">Receita Mensal</p>
+              <h3 className="text-2xl font-bold text-green-600">{formatMoney(stats.receitaMensal)}</h3>
+            </div>
+            <div className="p-2 bg-green-50 rounded-lg">
+              <TrendingUp className="text-green-600" size={24} />
             </div>
           </div>
-          <p className="text-gray-600 text-sm mb-1">Receita Mensal</p>
-          <p className="text-2xl font-bold text-gray-800">
-            R$ {kpis.receitaMensal.toFixed(2)}
-          </p>
+          <p className="text-xs text-slate-400">Vendas + Mensalidades</p>
         </div>
 
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="p-3 bg-red-100 rounded-lg">
-              <TrendingDown className="w-6 h-6 text-red-600" />
+        {/* Card: Despesas */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+          <div className="flex justify-between items-start mb-4">
+            <div>
+              <p className="text-sm font-medium text-slate-500">Despesas</p>
+              <h3 className="text-2xl font-bold text-red-600">{formatMoney(stats.despesasMensais)}</h3>
+            </div>
+            <div className="p-2 bg-red-50 rounded-lg">
+              <TrendingDown className="text-red-600" size={24} />
             </div>
           </div>
-          <p className="text-gray-600 text-sm mb-1">Despesas</p>
-          <p className="text-2xl font-bold text-gray-800">
-            R$ {kpis.despesasMensal.toFixed(2)}
-          </p>
+          <p className="text-xs text-slate-400">Contas e Manutenção</p>
         </div>
 
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="p-3 bg-blue-100 rounded-lg">
-              <DollarSign className="w-6 h-6 text-blue-600" />
+        {/* Card: Lucro Líquido */}
+        <div className={`bg-white p-6 rounded-xl shadow-sm border-l-4 ${stats.lucro >= 0 ? 'border-blue-500' : 'border-red-500'}`}>
+          <div className="flex justify-between items-start mb-4">
+            <div>
+              <p className="text-sm font-medium text-slate-500">Lucro Líquido</p>
+              <h3 className={`text-2xl font-bold ${stats.lucro >= 0 ? 'text-blue-900' : 'text-red-600'}`}>
+                {formatMoney(stats.lucro)}
+              </h3>
+            </div>
+            <div className="p-2 bg-blue-50 rounded-lg">
+              <DollarSign className="text-blue-600" size={24} />
             </div>
           </div>
-          <p className="text-gray-600 text-sm mb-1">Lucro Líquido</p>
-          <p className="text-2xl font-bold text-gray-800">
-            R$ {kpis.lucroLiquido.toFixed(2)}
-          </p>
+          <p className="text-xs text-slate-400">O que sobra no caixa</p>
         </div>
 
-        <div className="bg-white rounded-lg shadow p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="p-3 bg-purple-100 rounded-lg">
-              <Users className="w-6 h-6 text-purple-600" />
+        {/* Card: Alunos */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+          <div className="flex justify-between items-start mb-4">
+            <div>
+              <p className="text-sm font-medium text-slate-500">Alunos Ativos</p>
+              <h3 className="text-2xl font-bold text-slate-800">{stats.alunosAtivos}</h3>
+            </div>
+            <div className="p-2 bg-purple-50 rounded-lg">
+              <Users className="text-purple-600" size={24} />
             </div>
           </div>
-          <p className="text-gray-600 text-sm mb-1">Alunos Ativos</p>
-          <p className="text-2xl font-bold text-gray-800">{kpis.totalAlunos}</p>
+          <p className="text-xs text-slate-400">Treinando regularmente</p>
         </div>
       </div>
 
-      <div className="bg-white rounded-lg shadow">
-        <div className="p-6 border-b border-gray-200">
-          <h2 className="text-xl font-semibold text-gray-800">Atividades Recentes</h2>
-        </div>
-        <div className="p-6">
-          {recentActivities.length === 0 ? (
-            <p className="text-gray-500 text-center py-8">Nenhuma atividade recente</p>
-          ) : (
-            <div className="space-y-4">
-              {recentActivities.map((activity) => (
-                <div key={activity.id} className="flex items-center justify-between py-3 border-b border-gray-100 last:border-0">
-                  <div className="flex-1">
-                    <p className="font-medium text-gray-800">{activity.descricao}</p>
-                    <p className="text-sm text-gray-500">
-                      {format(new Date(activity.data), "dd 'de' MMMM 'de' yyyy", { locale: ptBR })}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className={`font-semibold ${activity.tipo === 'Receita' ? 'text-green-600' : 'text-red-600'}`}>
-                      {activity.tipo === 'Receita' ? '+' : '-'} R$ {activity.valor.toFixed(2)}
-                    </p>
-                    <p className="text-xs text-gray-500">{activity.tipo}</p>
-                  </div>
-                </div>
-              ))}
+      {/* Área de Gráfico/Avisos Rápido */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+          <h4 className="font-semibold text-slate-800 mb-4 flex items-center gap-2">
+            <Activity size={20} className="text-blue-500" /> 
+            Resumo Financeiro
+          </h4>
+          <div className="space-y-4">
+            <div className="flex justify-between items-center p-3 bg-slate-50 rounded-lg">
+              <span className="text-slate-600">Faturamento Bruto</span>
+              <span className="font-semibold text-slate-900">{formatMoney(stats.receitaMensal)}</span>
             </div>
-          )}
+            <div className="flex justify-between items-center p-3 bg-slate-50 rounded-lg">
+              <span className="text-slate-600">Total de Saídas</span>
+              <span className="font-semibold text-slate-900">{formatMoney(stats.despesasMensais)}</span>
+            </div>
+            <div className="mt-4 pt-4 border-t text-center">
+              <p className="text-sm text-slate-500">
+                Seu lucro atual é de <span className="font-bold text-blue-600">{((stats.lucro / (stats.receitaMensal || 1)) * 100).toFixed(0)}%</span> da receita.
+              </p>
+            </div>
+          </div>
+        </div>
+        
+        <div className="bg-gradient-to-br from-slate-800 to-slate-900 p-6 rounded-xl shadow-sm text-white flex flex-col justify-center items-center text-center">
+          <h4 className="text-xl font-bold mb-2">BJJ COLLEGE</h4>
+          <p className="text-slate-300 text-sm mb-4">Sistema de Gestão Integrado</p>
+          <div className="bg-white/10 px-4 py-2 rounded-lg backdrop-blur-sm border border-white/10 flex items-center gap-2">
+            <span className="relative flex h-3 w-3">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+            </span>
+            <p className="font-mono text-lg font-bold text-green-400">ONLINE</p>
+          </div>
         </div>
       </div>
     </div>
