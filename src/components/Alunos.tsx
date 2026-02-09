@@ -67,7 +67,11 @@ export default function Alunos() {
         `)
         .order('nome');
       
-      if (error) throw error;
+      if (error) {
+        console.error('Erro ao buscar alunos:', error);
+        // Don't toast here to avoid spamming if there's a persistent error
+        return; 
+      }
 
       const alunosComPresenca = data?.map((aluno: any) => {
         let ultimaData = null;
@@ -83,7 +87,6 @@ export default function Alunos() {
       setAlunos(alunosComPresenca || []);
     } catch (error) {
       console.error('Erro ao buscar alunos:', error);
-      addToast('Erro ao carregar lista de alunos.', 'error');
     } finally {
       setLoading(false);
     }
@@ -126,24 +129,46 @@ export default function Alunos() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    
+    if (!formData.nome || !formData.graduacao) {
+      addToast('Por favor, preencha o Nome e a Graduação.', 'warning');
+      return;
+    }
+
     try {
-      // Removemos campos calculados ou relations que não existem na tabela 'alunos'
-      // ATENÇÃO: É crucial remover 'ultimo_treino' e 'presencas' pois eles não são colunas reais
-      const { ultimo_treino, presencas, ...payload } = formData as any;
+      // Create a clean object with only the fields that exist in the 'alunos' table
+      const alunoData = {
+        nome: formData.nome,
+        foto_url: formData.foto_url,
+        data_nascimento: formData.data_nascimento,
+        peso: formData.peso,
+        graduacao: formData.graduacao,
+        status: formData.status || 'Ativo', // Default to 'Ativo' if undefined
+        nome_responsavel: formData.nome_responsavel,
+        parentesco: formData.parentesco,
+        whatsapp: formData.whatsapp,
+        tipo_sanguineo: formData.tipo_sanguineo,
+        alergias: formData.alergias,
+        neurodivergente: formData.neurodivergente || false,
+        detalhes_condicao: formData.detalhes_condicao,
+        gatilhos_cuidados: formData.gatilhos_cuidados,
+        competidor: formData.competidor || false,
+        bolsista: formData.bolsista || false,
+        bolsista_a2: formData.bolsista_a2 || false,
+      };
       
       if (editMode && formData.id) {
         const { error } = await supabase
           .from('alunos')
-          .update(payload)
+          .update(alunoData)
           .eq('id', formData.id);
         if (error) throw error;
         addToast('Aluno atualizado com sucesso!', 'success');
         setShowForm(false);
       } else {
-        // Para novos alunos, usamos insert().select().single() para obter o ID gerado
         const { data, error } = await supabase
           .from('alunos')
-          .insert([payload])
+          .insert([alunoData])
           .select()
           .single();
           
@@ -152,7 +177,6 @@ export default function Alunos() {
         addToast('Aluno cadastrado com sucesso!', 'success');
         setShowForm(false);
         
-        // Abre o QR Code automaticamente após cadastro, se os dados retornarem
         if (data) {
             setShowQRCode(data as Aluno);
         }
@@ -160,11 +184,10 @@ export default function Alunos() {
       
       setFormData({});
       setEditMode(false);
-      // fetchAlunos é chamado pelo Realtime, mas chamamos aqui para garantir update local imediato
       fetchAlunos();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Erro ao salvar aluno:', error);
-      addToast('Erro ao salvar. Verifique se todos os campos obrigatórios estão preenchidos.', 'error');
+      addToast(`Erro ao salvar: ${error.message}`, 'error');
     }
   }
 
@@ -340,21 +363,16 @@ export default function Alunos() {
         </div>
       )}
 
-      {/* MODAL QR CODE (CARTEIRINHA) */}
+      {/* MODAL QR CODE */}
       {showQRCode && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50 animate-fadeIn" onClick={() => setShowQRCode(null)}>
           <div className="bg-white rounded-2xl flex flex-col items-center max-w-sm w-full overflow-hidden shadow-2xl" onClick={e => e.stopPropagation()}>
-            
-            {/* Topo da Carteirinha */}
             <div className="bg-slate-900 w-full p-6 text-center">
                 <h3 className="text-xl font-bold text-white tracking-widest">BJJ COLLEGE</h3>
                 <p className="text-slate-400 text-xs uppercase tracking-wide mt-1">Carteira do Atleta</p>
             </div>
-
             <div className="p-8 flex flex-col items-center w-full bg-white relative">
-                {/* Faixa decorativa baseada na graduação (Simples) */}
                 <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-blue-500 to-purple-600"></div>
-
                 <div className="w-24 h-24 rounded-full border-4 border-white shadow-lg overflow-hidden -mt-16 mb-4 bg-slate-200 z-10">
                   {showQRCode.foto_url ? (
                     <img src={showQRCode.foto_url} alt={showQRCode.nome} className="w-full h-full object-cover" />
@@ -364,13 +382,10 @@ export default function Alunos() {
                     </div>
                   )}
                 </div>
-
                 <h2 className="text-2xl font-bold text-slate-800 text-center leading-tight">{showQRCode.nome}</h2>
                 <span className="px-3 py-1 bg-slate-100 rounded-full text-sm font-semibold text-slate-600 mt-2 mb-6 border border-slate-200">
                   {showQRCode.graduacao}
                 </span>
-                
-                {/* QR CODE */}
                 <div className="p-2 bg-white border-2 border-slate-900 rounded-lg">
                   <QRCode
                     value={showQRCode.id}
@@ -381,18 +396,11 @@ export default function Alunos() {
                 </div>
                 <p className="text-xs text-slate-400 mt-2 font-mono">{showQRCode.id.slice(0, 8)}...</p>
             </div>
-            
             <div className="bg-slate-50 w-full p-4 flex gap-2 border-t border-slate-100">
-              <button 
-                onClick={() => window.print()}
-                className="flex-1 py-2 bg-slate-900 text-white rounded-lg font-bold hover:bg-slate-800 flex items-center justify-center gap-2"
-              >
-                <Download size={18} /> Imprimir / Salvar
+              <button onClick={() => window.print()} className="flex-1 py-2 bg-slate-900 text-white rounded-lg font-bold hover:bg-slate-800 flex items-center justify-center gap-2">
+                <Download size={18} /> Salvar
               </button>
-              <button 
-                onClick={() => setShowQRCode(null)}
-                className="px-4 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg font-bold hover:bg-slate-50"
-              >
+              <button onClick={() => setShowQRCode(null)} className="px-4 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg font-bold hover:bg-slate-50">
                 Fechar
               </button>
             </div>

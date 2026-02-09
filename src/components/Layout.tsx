@@ -1,6 +1,6 @@
 import React from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { LayoutDashboard, Users, DollarSign, ShoppingCart, Settings, LogOut, QrCode } from 'lucide-react';
+import { LayoutDashboard, Users, DollarSign, ShoppingCart, Settings, LogOut, QrCode, History } from 'lucide-react';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -13,7 +13,8 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
 
   const menuItems = [
     { id: 'dashboard', label: 'Painel Geral', icon: LayoutDashboard },
-    { id: 'totem', label: 'Totem / Scanner', icon: QrCode }, // Alterado para QrCode para garantir compatibilidade
+    { id: 'totem', label: 'Totem / Scanner', icon: QrCode },
+    { id: 'presencas', label: 'Histórico', icon: History }, // Botão Adicionado
     { id: 'alunos', label: 'Alunos', icon: Users },
     { id: 'financeiro', label: 'Financeiro', icon: DollarSign },
     { id: 'cantina', label: 'Cantina & Loja', icon: ShoppingCart },

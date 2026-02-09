@@ -9,6 +9,7 @@ import Financeiro from './components/Financeiro';
 import Cantina from './components/Cantina';
 import Configuracoes from './components/Configuracoes';
 import Totem from './components/Totem';
+import Presencas from './components/Presencas'; // Importação do componente de Histórico
 
 function AppContent() {
   // Alterado para usar user e loading para verificar autenticação de forma segura
@@ -32,6 +33,7 @@ function AppContent() {
     <Layout currentPage={currentPage} onNavigate={setCurrentPage}>
       {currentPage === 'dashboard' && <Dashboard />}
       {currentPage === 'totem' && <Totem />}
+      {currentPage === 'presencas' && <Presencas />} {/* Rota para o Histórico de Presenças */}
       {currentPage === 'alunos' && <Alunos />}
       {currentPage === 'financeiro' && <Financeiro />}
       {currentPage === 'cantina' && <Cantina />}
