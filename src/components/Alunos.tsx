@@ -624,25 +624,26 @@ export default function Alunos() {
                   >
                     <option value="">Selecione...</option>
                     <optgroup label="Kids (0-15 anos)">
-                      <option value="Branca">Branca</option>
-                      <option value="Cinza/Branca">Cinza/Branca</option>
-                      <option value="Cinza">Cinza</option>
-                      <option value="Cinza/Preta">Cinza/Preta</option>
-                      <option value="Amarela/Branca">Amarela/Branca</option>
-                      <option value="Amarela">Amarela</option>
-                      <option value="Amarela/Preta">Amarela/Preta</option>
-                      <option value="Laranja/Branca">Laranja/Branca</option>
-                      <option value="Laranja">Laranja</option>
-                      <option value="Laranja/Preta">Laranja/Preta</option>
-                      <option value="Verde/Branca">Verde/Branca</option>
-                      <option value="Verde">Verde</option>
-                      <option value="Verde/Preta">Verde/Preta</option>
+                      <option value="Branca">Faixa Branca</option>
+                      <option value="Cinza/Branca">Faixa Cinza/Branca</option>
+                      <option value="Cinza">Faixa Cinza</option>
+                      <option value="Cinza/Preta">Faixa Cinza/Preta</option>
+                      <option value="Amarela/Branca">Faixa Amarela/Branca</option>
+                      <option value="Amarela">Faixa Amarela</option>
+                      <option value="Amarela/Preta">Faixa Amarela/Preta</option>
+                      <option value="Laranja/Branca">Faixa Laranja/Branca</option>
+                      <option value="Laranja">FaixaLaranja</option>
+                      <option value="Laranja/Preta">Faixa Laranja/Preta</option>
+                      <option value="Verde/Branca">Faixa Verde/Branca</option>
+                      <option value="Verde">Faixa Verde</option>
+                      <option value="Verde/Preta">Faixa Verde/Preta</option>
                     </optgroup>
                     <optgroup label="Adulto (16+)">
-                      <option value="Azul">Azul</option>
-                      <option value="Roxa">Roxa</option>
-                      <option value="Marrom">Marrom</option>
-                      <option value="Preta">Preta</option>
+                      <option value="Branca">Faixa Branca</option>
+                      <option value="Azul">Faixa Azul</option>
+                      <option value="Roxa">Faixa Roxa</option>
+                      <option value="Marrom">Faixa Marrom</option>
+                      <option value="Preta">Faixa Preta</option>
                     </optgroup>
                   </select>
                 </div>
