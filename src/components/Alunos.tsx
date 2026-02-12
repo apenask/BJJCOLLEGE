@@ -40,9 +40,6 @@ export default function Alunos() {
   const [dividaTotal, setDividaTotal] = useState(0);
 
   // Estados de Controle de Visualização
-  // 'list' = Tabela de alunos
-  // 'form' = Formulário de cadastro/edição
-  // 'details' = Tela de detalhes do aluno
   const [viewState, setViewState] = useState<'list' | 'form' | 'details'>('list');
   
   const [searchTerm, setSearchTerm] = useState('');
@@ -77,7 +74,6 @@ export default function Alunos() {
       
       if (error) throw error;
 
-      // Processa o último treino
       const alunosComPresenca = data?.map((aluno: any) => {
         let ultimaData = null;
         if (aluno.presencas && aluno.presencas.length > 0) {
@@ -97,12 +93,10 @@ export default function Alunos() {
     }
   }
 
-  // ABERTURA DA TELA DE DETALHES
   async function handleOpenDetails(aluno: Aluno) {
     setSelectedAluno(aluno);
-    setViewState('details'); // Muda a tela para detalhes
+    setViewState('details');
     
-    // Busca dívidas
     const { data: vendas } = await supabase
       .from('vendas')
       .select('total')
@@ -123,7 +117,6 @@ export default function Alunos() {
     setFormData({});
   }
 
-  // FUNÇÕES DE AÇÃO (Salvar, Deletar, Checkin)
   async function handleCheckIn(e: React.MouseEvent, alunoId: string, nomeAluno: string) {
     e.stopPropagation();
     if (!window.confirm(`Confirmar presença de hoje para ${nomeAluno}?`)) return;
@@ -183,7 +176,7 @@ export default function Alunos() {
       
       setFormData({});
       setEditMode(false);
-      setViewState('list'); // Volta para a lista
+      setViewState('list');
       fetchAlunos();
     } catch (error: any) {
       console.error('Erro ao salvar:', error);
@@ -204,7 +197,6 @@ export default function Alunos() {
     }
   }
 
-  // AUXILIARES
   function formatDateSafe(dateStr?: string) {
     if (!dateStr) return '-';
     const date = new Date(dateStr);
@@ -240,7 +232,6 @@ export default function Alunos() {
         </div>
         
         <form onSubmit={handleSubmit} className="space-y-6 max-w-4xl mx-auto">
-            {/* SEUS CAMPOS DO FORMULÁRIO AQUI - MANTENDO A LÓGICA ORIGINAL */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Nome Completo</label>
@@ -311,7 +302,7 @@ export default function Alunos() {
     );
   }
 
-  // 2. TELA DE DETALHES (O que você pediu)
+  // 2. TELA DE DETALHES (Reorganizada e Sem Botão de Carteirinha)
   if (viewState === 'details' && selectedAluno) {
     return (
       <div className="bg-white rounded-xl shadow-sm overflow-hidden animate-fadeIn min-h-[80vh]">
@@ -319,13 +310,13 @@ export default function Alunos() {
         <div className="relative h-48 bg-gradient-to-r from-blue-700 to-slate-900 p-6 flex items-end">
           <button 
             onClick={handleBackToList}
-            className="absolute top-4 left-4 bg-white/20 hover:bg-white/30 text-white p-2 rounded-full backdrop-blur-sm transition-all flex items-center gap-2 pr-4"
+            className="absolute top-4 left-4 bg-white/20 hover:bg-white/30 text-white p-2 rounded-full backdrop-blur-sm transition-all flex items-center gap-2 pr-4 z-10"
           >
             <ChevronLeft size={20} /> Voltar
           </button>
           
-          <div className="flex items-end gap-6 translate-y-10 w-full max-w-5xl mx-auto">
-            <div className="w-32 h-32 rounded-2xl border-4 border-white bg-slate-200 overflow-hidden shadow-xl relative group">
+          <div className="flex items-end gap-6 translate-y-10 w-full max-w-5xl mx-auto px-4">
+            <div className="w-32 h-32 rounded-2xl border-4 border-white bg-slate-200 overflow-hidden shadow-xl relative group flex-shrink-0">
               {selectedAluno.foto_url ? (
                 <img src={selectedAluno.foto_url} alt="" className="w-full h-full object-cover" />
               ) : (
@@ -334,131 +325,151 @@ export default function Alunos() {
                 </div>
               )}
             </div>
-            <div className="mb-2 pb-1">
-              <div className="flex items-center gap-3">
-                 <h1 className="text-3xl font-bold text-white shadow-sm">{selectedAluno.nome}</h1>
+            <div className="mb-2 pb-1 flex-1">
+              <div className="flex flex-wrap items-center gap-3">
+                 <h1 className="text-2xl sm:text-3xl font-bold text-white shadow-sm">{selectedAluno.nome}</h1>
                  {selectedAluno.competidor && <span className="bg-yellow-500 text-yellow-950 text-xs font-bold px-2 py-1 rounded">Competidor</span>}
               </div>
-              <p className="text-blue-100 flex items-center gap-2 mt-1">
+              <p className="text-blue-100 flex flex-wrap items-center gap-2 mt-1">
                  <span className="px-2 py-0.5 bg-white/20 rounded text-sm">{selectedAluno.graduacao}</span>
                  {selectedAluno.bolsista && <span className="px-2 py-0.5 bg-green-500/20 border border-green-400/50 rounded text-sm text-green-100">Bolsista</span>}
               </p>
-            </div>
-            
-            <div className="ml-auto mb-4 hidden sm:block">
-               <button 
-                onClick={() => setShowQRCode(selectedAluno)}
-                className="bg-white text-slate-900 px-4 py-2 rounded-lg font-bold shadow-lg flex items-center gap-2 hover:bg-slate-50 transition-colors"
-               >
-                 <QrCode size={18} /> Carteirinha
-               </button>
             </div>
           </div>
         </div>
 
         {/* Conteúdo dos Detalhes */}
-        <div className="mt-16 max-w-5xl mx-auto p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="mt-16 max-w-5xl mx-auto p-6 space-y-6">
             
-            {/* Coluna Esquerda - Status */}
-            <div className="space-y-4">
-                <div className={`p-5 rounded-xl border-l-4 shadow-sm ${
+            {/* LINHA DE STATUS (As 3 Caixas Alinhadas) */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {/* Box 1: Situação Cadastral */}
+                <div className={`p-5 rounded-xl border-l-4 shadow-sm flex items-center justify-between ${
                     selectedAluno.status === 'Ativo' ? 'bg-green-50 border-green-500' : 'bg-red-50 border-red-500'
                 }`}>
-                    <p className="text-sm font-medium text-slate-600">Situação Cadastral</p>
-                    <h3 className={`text-2xl font-bold ${selectedAluno.status === 'Ativo' ? 'text-green-700' : 'text-red-700'}`}>
-                        {selectedAluno.status}
-                    </h3>
-                </div>
-
-                <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-                    <div className="flex justify-between items-start">
-                        <div>
-                            <p className="text-sm font-medium text-slate-500">Dívida Cantina/Loja</p>
-                            <h3 className={`text-2xl font-bold ${dividaTotal > 0 ? 'text-red-600' : 'text-slate-800'}`}>
-                                R$ {dividaTotal.toFixed(2).replace('.', ',')}
-                            </h3>
-                        </div>
-                        <div className="p-2 bg-slate-100 rounded-lg">
-                            <DollarSign className="text-slate-500" />
-                        </div>
+                    <div>
+                        <p className="text-sm font-medium text-slate-600">Situação</p>
+                        <h3 className={`text-xl font-bold ${selectedAluno.status === 'Ativo' ? 'text-green-700' : 'text-red-700'}`}>
+                            {selectedAluno.status}
+                        </h3>
+                    </div>
+                    <div className={`p-3 rounded-full ${selectedAluno.status === 'Ativo' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
+                        <Activity size={24} />
                     </div>
                 </div>
 
-                 <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-                    <p className="text-sm font-medium text-slate-500 mb-3">Último Treino</p>
-                     {(() => {
-                        const status = getStatusPresenca(selectedAluno.ultimo_treino);
-                        return (
-                            <div className={`flex items-center gap-3 p-3 rounded-lg ${status.color}`}>
-                                <CalendarCheck size={20} />
-                                <span className="font-bold">{status.label}</span>
-                            </div>
-                        )
-                    })()}
+                {/* Box 2: Dívida */}
+                <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+                    <div>
+                        <p className="text-sm font-medium text-slate-500">Dívida Cantina</p>
+                        <h3 className={`text-xl font-bold ${dividaTotal > 0 ? 'text-red-600' : 'text-slate-800'}`}>
+                            R$ {dividaTotal.toFixed(2).replace('.', ',')}
+                        </h3>
+                    </div>
+                    <div className="p-3 bg-slate-100 rounded-full text-slate-500">
+                        <DollarSign size={24} />
+                    </div>
+                </div>
+
+                {/* Box 3: Último Treino */}
+                 <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+                    <div>
+                        <p className="text-sm font-medium text-slate-500">Última Presença</p>
+                        {(() => {
+                            const status = getStatusPresenca(selectedAluno.ultimo_treino);
+                            return (
+                                <h3 className={`text-lg font-bold ${status.color.replace('bg-', 'text-').split(' ')[1] || 'text-slate-700'}`}>
+                                    {status.label}
+                                </h3>
+                            )
+                        })()}
+                    </div>
+                    <div className="p-3 bg-blue-50 rounded-full text-blue-600">
+                        <CalendarCheck size={24} />
+                    </div>
                 </div>
             </div>
 
-            {/* Coluna Direita - Dados Completos */}
-            <div className="md:col-span-2 space-y-6">
-                <div className="bg-white border rounded-xl p-6 shadow-sm">
-                    <h3 className="font-bold text-lg text-slate-800 mb-4 flex items-center gap-2 border-b pb-2">
+            {/* DADOS COMPLETOS */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div className="lg:col-span-2 bg-white border rounded-xl p-6 shadow-sm h-full">
+                    <h3 className="font-bold text-lg text-slate-800 mb-6 flex items-center gap-2 border-b pb-2">
                         <User size={20} className="text-blue-600" /> Dados Pessoais
                     </h3>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-8">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-6 gap-x-8">
                         <div>
-                            <span className="block text-sm text-slate-500">Data Nascimento</span>
-                            <span className="font-medium text-slate-800">{formatDateSafe(selectedAluno.data_nascimento)}</span>
+                            <span className="block text-sm text-slate-500 mb-1">Data Nascimento</span>
+                            <span className="font-medium text-slate-900 text-lg">{formatDateSafe(selectedAluno.data_nascimento)}</span>
                         </div>
                         <div>
-                            <span className="block text-sm text-slate-500">Peso</span>
-                            <span className="font-medium text-slate-800">{selectedAluno.peso} kg</span>
+                            <span className="block text-sm text-slate-500 mb-1">Peso Atual</span>
+                            <span className="font-medium text-slate-900 text-lg">{selectedAluno.peso} kg</span>
                         </div>
                         <div className="sm:col-span-2">
-                            <span className="block text-sm text-slate-500">Contato (WhatsApp)</span>
+                            <span className="block text-sm text-slate-500 mb-1">Contato (WhatsApp)</span>
                             <div className="flex items-center gap-2">
-                                <Phone size={16} className="text-green-600" />
-                                <span className="font-medium text-slate-800">{selectedAluno.whatsapp || 'Não informado'}</span>
+                                <Phone size={18} className="text-green-600" />
+                                <span className="font-medium text-slate-900 text-lg">{selectedAluno.whatsapp || 'Não informado'}</span>
                             </div>
                         </div>
                         {selectedAluno.nome_responsavel && (
-                             <div className="sm:col-span-2 bg-slate-50 p-3 rounded-lg border border-slate-100">
-                                <span className="block text-xs font-bold text-slate-500 uppercase">Responsável</span>
-                                <span className="font-medium text-slate-800">{selectedAluno.nome_responsavel} <span className="text-slate-400 text-sm">({selectedAluno.parentesco})</span></span>
+                             <div className="sm:col-span-2 bg-slate-50 p-4 rounded-xl border border-slate-200 mt-2">
+                                <span className="block text-xs font-bold text-slate-500 uppercase mb-1">Responsável Legal</span>
+                                <span className="font-medium text-slate-900 text-lg block">{selectedAluno.nome_responsavel}</span>
+                                <span className="text-slate-500 text-sm">({selectedAluno.parentesco})</span>
                             </div>
                         )}
                     </div>
                 </div>
 
-                {(selectedAluno.alergias || selectedAluno.neurodivergente) && (
-                    <div className="bg-white border rounded-xl p-6 shadow-sm">
-                        <h3 className="font-bold text-lg text-slate-800 mb-4 flex items-center gap-2 border-b pb-2">
-                            <AlertCircle size={20} className="text-red-500" /> Saúde & Cuidados
-                        </h3>
-                        <div className="space-y-4">
-                            {selectedAluno.tipo_sanguineo && (
-                                <div><span className="text-slate-500">Tipo Sanguíneo: </span><span className="font-bold">{selectedAluno.tipo_sanguineo}</span></div>
-                            )}
-                            {selectedAluno.alergias && (
-                                <div className="bg-red-50 p-3 rounded border border-red-100 text-red-800 text-sm">
-                                    <strong>Alergias:</strong> {selectedAluno.alergias}
-                                </div>
-                            )}
-                            {selectedAluno.neurodivergente && (
-                                <div className="bg-blue-50 p-3 rounded border border-blue-100 text-blue-800 text-sm">
-                                    <strong>Neurodivergência:</strong> {selectedAluno.detalhes_condicao}
-                                    {selectedAluno.gatilhos_cuidados && <p className="mt-1 pt-1 border-t border-blue-200 text-xs">{selectedAluno.gatilhos_cuidados}</p>}
-                                </div>
-                            )}
+                <div className="space-y-6">
+                    {(selectedAluno.alergias || selectedAluno.neurodivergente || selectedAluno.tipo_sanguineo) ? (
+                        <div className="bg-white border rounded-xl p-6 shadow-sm h-full">
+                            <h3 className="font-bold text-lg text-slate-800 mb-6 flex items-center gap-2 border-b pb-2">
+                                <AlertCircle size={20} className="text-red-500" /> Saúde & Cuidados
+                            </h3>
+                            <div className="space-y-6">
+                                {selectedAluno.tipo_sanguineo && (
+                                    <div>
+                                        <span className="text-slate-500 text-sm block mb-1">Tipo Sanguíneo</span>
+                                        <span className="font-bold text-lg bg-red-100 text-red-700 px-3 py-1 rounded-full inline-block">
+                                            {selectedAluno.tipo_sanguineo}
+                                        </span>
+                                    </div>
+                                )}
+                                {selectedAluno.alergias && (
+                                    <div className="bg-red-50 p-4 rounded-xl border border-red-100">
+                                        <strong className="text-red-800 text-sm block mb-1">⚠️ Alergias / Medicamentos</strong>
+                                        <p className="text-slate-700">{selectedAluno.alergias}</p>
+                                    </div>
+                                )}
+                                {selectedAluno.neurodivergente && (
+                                    <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100">
+                                        <strong className="text-indigo-800 text-sm block mb-1">🧩 Neurodivergência</strong>
+                                        <p className="text-slate-700 font-medium">{selectedAluno.detalhes_condicao}</p>
+                                        {selectedAluno.gatilhos_cuidados && (
+                                            <p className="mt-2 pt-2 border-t border-indigo-200 text-slate-600 text-sm">
+                                                <span className="font-bold text-indigo-700">Cuidados:</span> {selectedAluno.gatilhos_cuidados}
+                                            </p>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
                         </div>
-                    </div>
-                )}
+                    ) : (
+                        <div className="bg-slate-50 border border-dashed border-slate-300 rounded-xl p-6 flex flex-col items-center justify-center text-center h-full text-slate-400">
+                            <AlertCircle size={32} className="mb-2 opacity-50" />
+                            <p>Sem observações de saúde cadastradas.</p>
+                        </div>
+                    )}
+                </div>
             </div>
         </div>
       </div>
     );
   }
 
-  // 3. TELA DE LISTA (Padrão)
+  // 3. TELA DE LISTA (Padrão - Com o botão da Carteirinha adicionado)
   return (
     <div className="space-y-6 animate-fadeIn">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -517,6 +528,16 @@ export default function Alunos() {
                     </td>
                     <td className="p-4 text-right">
                       <div className="flex justify-end gap-2" onClick={e => e.stopPropagation()}>
+                        
+                        {/* NOVO BOTÃO DE CARTEIRINHA AQUI */}
+                        <button 
+                          onClick={() => setShowQRCode(aluno)} 
+                          className="p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-800 rounded" 
+                          title="Carteirinha / QR Code"
+                        >
+                          <QrCode size={18} />
+                        </button>
+
                         <button onClick={(e) => handleCheckIn(e, aluno.id, aluno.nome)} className="p-2 text-green-600 hover:bg-green-50 rounded" title="Presença"><CalendarCheck size={18} /></button>
                         <button onClick={() => { setFormData(aluno); setEditMode(true); setViewState('form'); }} className="p-2 text-blue-600 hover:bg-blue-50 rounded"><Edit size={18} /></button>
                         <button onClick={() => handleDelete(aluno.id)} className="p-2 text-red-600 hover:bg-red-50 rounded"><Trash2 size={18} /></button>
@@ -533,12 +554,44 @@ export default function Alunos() {
       {/* MODAL QR CODE (SEPARADO) */}
       {showQRCode && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-[60]" onClick={() => setShowQRCode(null)}>
-            <div className="bg-white p-6 rounded-xl max-w-sm w-full text-center" onClick={e => e.stopPropagation()}>
-                <h3 className="text-xl font-bold mb-4">{showQRCode.nome}</h3>
-                <div className="bg-white p-2 inline-block border-2 border-black rounded">
-                    <QRCode value={showQRCode.id} size={200} />
+            <div className="bg-white rounded-2xl flex flex-col items-center max-w-sm w-full overflow-hidden shadow-2xl" onClick={e => e.stopPropagation()}>
+                <div className="bg-slate-900 w-full p-6 text-center">
+                    <h3 className="text-xl font-bold text-white tracking-widest">BJJ COLLEGE</h3>
+                    <p className="text-slate-400 text-xs uppercase tracking-wide mt-1">Carteira do Atleta</p>
                 </div>
-                <button onClick={() => setShowQRCode(null)} className="mt-6 w-full py-2 bg-slate-200 rounded-lg font-bold">Fechar</button>
+                <div className="p-8 flex flex-col items-center w-full bg-white relative">
+                    <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-blue-500 to-purple-600"></div>
+                    <div className="w-24 h-24 rounded-full border-4 border-white shadow-lg overflow-hidden -mt-16 mb-4 bg-slate-200 z-10">
+                    {showQRCode.foto_url ? (
+                        <img src={showQRCode.foto_url} alt={showQRCode.nome} className="w-full h-full object-cover" />
+                    ) : (
+                        <div className="w-full h-full flex items-center justify-center bg-slate-300 text-slate-500">
+                        <User size={40} />
+                        </div>
+                    )}
+                    </div>
+                    <h2 className="text-2xl font-bold text-slate-800 text-center leading-tight">{showQRCode.nome}</h2>
+                    <span className="px-3 py-1 bg-slate-100 rounded-full text-sm font-semibold text-slate-600 mt-2 mb-6 border border-slate-200">
+                    {showQRCode.graduacao}
+                    </span>
+                    <div className="p-2 bg-white border-2 border-slate-900 rounded-lg">
+                    <QRCode
+                        value={showQRCode.id}
+                        size={180}
+                        style={{ height: "auto", maxWidth: "100%", width: "100%" }}
+                        viewBox={`0 0 256 256`}
+                    />
+                    </div>
+                    <p className="text-xs text-slate-400 mt-2 font-mono">{showQRCode.id.slice(0, 8)}...</p>
+                </div>
+                <div className="bg-slate-50 w-full p-4 flex gap-2 border-t border-slate-100">
+                <button onClick={() => window.print()} className="flex-1 py-2 bg-slate-900 text-white rounded-lg font-bold hover:bg-slate-800 flex items-center justify-center gap-2">
+                    <Download size={18} /> Salvar
+                </button>
+                <button onClick={() => setShowQRCode(null)} className="px-4 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg font-bold hover:bg-slate-50">
+                    Fechar
+                </button>
+                </div>
             </div>
         </div>
       )}
