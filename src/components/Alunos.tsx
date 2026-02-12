@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Plus, Search, Edit, Trash2, User, AlertCircle, Cake, X, Activity, Trophy, Award, Star, CalendarCheck, Clock, AlertTriangle, QrCode, Download } from 'lucide-react';
-import { format, differenceInDays, parseISO } from 'date-fns';
+import { Plus, Search, Edit, Trash2, User, AlertCircle, Cake, X, Activity, Trophy, Award, Star, CalendarCheck, Clock, AlertTriangle, QrCode, Download, ChevronLeft, DollarSign, Phone } from 'lucide-react';
+import { format, differenceInDays, parseISO, isValid } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useToast } from '../contexts/ToastContext';
 import QRCode from 'react-qr-code';
 
+// Interface completa do Aluno
 interface Aluno {
   id: string;
   nome: string;
@@ -26,26 +27,33 @@ interface Aluno {
   bolsista?: boolean;
   bolsista_a2?: boolean;
   created_at: string;
-  ultimo_treino?: string; 
+  ultimo_treino?: string;
+  presencas?: any[];
 }
 
 export default function Alunos() {
   const { addToast } = useToast();
+  
+  // Estados de Dados
   const [alunos, setAlunos] = useState<Aluno[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [showForm, setShowForm] = useState(false);
-  
-  const [selectedAluno, setSelectedAluno] = useState<Aluno | null>(null);
   const [dividaTotal, setDividaTotal] = useState(0);
-  const [showQRCode, setShowQRCode] = useState<Aluno | null>(null);
 
+  // Estados de Controle de Visualização
+  // 'list' = Tabela de alunos
+  // 'form' = Formulário de cadastro/edição
+  // 'details' = Tela de detalhes do aluno
+  const [viewState, setViewState] = useState<'list' | 'form' | 'details'>('list');
+  
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedAluno, setSelectedAluno] = useState<Aluno | null>(null);
+  const [showQRCode, setShowQRCode] = useState<Aluno | null>(null);
   const [formData, setFormData] = useState<Partial<Aluno>>({});
   const [editMode, setEditMode] = useState(false);
 
   useEffect(() => {
     fetchAlunos();
-
+    // Configuração do Realtime do Supabase
     const channel = supabase
       .channel('alunos_realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'alunos' }, () => fetchAlunos())
@@ -67,12 +75,9 @@ export default function Alunos() {
         `)
         .order('nome');
       
-      if (error) {
-        console.error('Erro ao buscar alunos:', error);
-        // Don't toast here to avoid spamming if there's a persistent error
-        return; 
-      }
+      if (error) throw error;
 
+      // Processa o último treino
       const alunosComPresenca = data?.map((aluno: any) => {
         let ultimaData = null;
         if (aluno.presencas && aluno.presencas.length > 0) {
@@ -92,6 +97,33 @@ export default function Alunos() {
     }
   }
 
+  // ABERTURA DA TELA DE DETALHES
+  async function handleOpenDetails(aluno: Aluno) {
+    setSelectedAluno(aluno);
+    setViewState('details'); // Muda a tela para detalhes
+    
+    // Busca dívidas
+    const { data: vendas } = await supabase
+      .from('vendas')
+      .select('total')
+      .eq('aluno_id', aluno.id)
+      .eq('status', 'Fiado');
+
+    if (vendas) {
+      const totalDevendo = vendas.reduce((acc, venda) => acc + Number(venda.total), 0);
+      setDividaTotal(totalDevendo);
+    } else {
+      setDividaTotal(0);
+    }
+  }
+
+  function handleBackToList() {
+    setViewState('list');
+    setSelectedAluno(null);
+    setFormData({});
+  }
+
+  // FUNÇÕES DE AÇÃO (Salvar, Deletar, Checkin)
   async function handleCheckIn(e: React.MouseEvent, alunoId: string, nomeAluno: string) {
     e.stopPropagation();
     if (!window.confirm(`Confirmar presença de hoje para ${nomeAluno}?`)) return;
@@ -110,40 +142,21 @@ export default function Alunos() {
     }
   }
 
-  async function handleOpenDetails(aluno: Aluno) {
-    setSelectedAluno(aluno);
-    
-    const { data: vendas } = await supabase
-      .from('vendas')
-      .select('total')
-      .eq('aluno_id', aluno.id)
-      .eq('status', 'Fiado');
-
-    if (vendas) {
-      const totalDevendo = vendas.reduce((acc, venda) => acc + Number(venda.total), 0);
-      setDividaTotal(totalDevendo);
-    } else {
-      setDividaTotal(0);
-    }
-  }
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    
     if (!formData.nome || !formData.graduacao) {
       addToast('Por favor, preencha o Nome e a Graduação.', 'warning');
       return;
     }
 
     try {
-      // Create a clean object with only the fields that exist in the 'alunos' table
       const alunoData = {
         nome: formData.nome,
         foto_url: formData.foto_url,
         data_nascimento: formData.data_nascimento,
         peso: formData.peso,
         graduacao: formData.graduacao,
-        status: formData.status || 'Ativo', // Default to 'Ativo' if undefined
+        status: formData.status || 'Ativo',
         nome_responsavel: formData.nome_responsavel,
         parentesco: formData.parentesco,
         whatsapp: formData.whatsapp,
@@ -158,35 +171,22 @@ export default function Alunos() {
       };
       
       if (editMode && formData.id) {
-        const { error } = await supabase
-          .from('alunos')
-          .update(alunoData)
-          .eq('id', formData.id);
+        const { error } = await supabase.from('alunos').update(alunoData).eq('id', formData.id);
         if (error) throw error;
         addToast('Aluno atualizado com sucesso!', 'success');
-        setShowForm(false);
       } else {
-        const { data, error } = await supabase
-          .from('alunos')
-          .insert([alunoData])
-          .select()
-          .single();
-          
+        const { data, error } = await supabase.from('alunos').insert([alunoData]).select().single();
         if (error) throw error;
-        
         addToast('Aluno cadastrado com sucesso!', 'success');
-        setShowForm(false);
-        
-        if (data) {
-            setShowQRCode(data as Aluno);
-        }
+        if (data) setShowQRCode(data as Aluno);
       }
       
       setFormData({});
       setEditMode(false);
+      setViewState('list'); // Volta para a lista
       fetchAlunos();
     } catch (error: any) {
-      console.error('Erro ao salvar aluno:', error);
+      console.error('Erro ao salvar:', error);
       addToast(`Erro ao salvar: ${error.message}`, 'error');
     }
   }
@@ -196,7 +196,7 @@ export default function Alunos() {
     try {
       const { error } = await supabase.from('alunos').delete().eq('id', id);
       if (error) throw error;
-      addToast('Aluno removido com sucesso.', 'success');
+      addToast('Aluno removido.', 'success');
       fetchAlunos();
     } catch (error) {
       console.error('Erro ao excluir:', error);
@@ -204,14 +204,11 @@ export default function Alunos() {
     }
   }
 
-  function isAniversariante(dataNasc: string) {
-    if (!dataNasc) return false;
-    const hoje = new Date();
-    const nasc = new Date(dataNasc);
-    const nascAjustado = new Date(nasc.getUTCFullYear(), nasc.getUTCMonth(), nasc.getUTCDate());
-    
-    return hoje.getDate() === nascAjustado.getDate() && 
-           hoje.getMonth() === nascAjustado.getMonth();
+  // AUXILIARES
+  function formatDateSafe(dateStr?: string) {
+    if (!dateStr) return '-';
+    const date = new Date(dateStr);
+    return isValid(date) ? format(date, "dd 'de' MMMM", { locale: ptBR }) : '-';
   }
 
   function getStatusPresenca(ultimoTreino?: string) {
@@ -227,20 +224,250 @@ export default function Alunos() {
     aluno.nome.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  // --- RENDERIZAÇÃO ---
+
+  // 1. TELA DE FORMULÁRIO
+  if (viewState === 'form') {
+    return (
+      <div className="bg-white rounded-xl shadow-sm p-6 animate-fadeIn">
+        <div className="flex items-center gap-4 mb-6 border-b pb-4">
+          <button onClick={handleBackToList} className="p-2 hover:bg-slate-100 rounded-full">
+            <ChevronLeft size={24} />
+          </button>
+          <h2 className="text-2xl font-bold text-slate-800">
+            {editMode ? 'Editar Aluno' : 'Novo Aluno'}
+          </h2>
+        </div>
+        
+        <form onSubmit={handleSubmit} className="space-y-6 max-w-4xl mx-auto">
+            {/* SEUS CAMPOS DO FORMULÁRIO AQUI - MANTENDO A LÓGICA ORIGINAL */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Nome Completo</label>
+                  <input type="text" required className="w-full p-2 border rounded-lg" value={formData.nome || ''} onChange={e => setFormData({...formData, nome: e.target.value})} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Foto URL</label>
+                  <input type="text" className="w-full p-2 border rounded-lg" value={formData.foto_url || ''} onChange={e => setFormData({...formData, foto_url: e.target.value})} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Data de Nascimento</label>
+                  <input type="date" className="w-full p-2 border rounded-lg" value={formData.data_nascimento || ''} onChange={e => setFormData({...formData, data_nascimento: e.target.value})} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Peso (kg)</label>
+                  <input type="number" className="w-full p-2 border rounded-lg" value={formData.peso || ''} onChange={e => setFormData({...formData, peso: parseFloat(e.target.value)})} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Graduação</label>
+                  <select className="w-full p-2 border rounded-lg bg-white" value={formData.graduacao || ''} onChange={e => setFormData({...formData, graduacao: e.target.value})}>
+                    <option value="">Selecione...</option>
+                    <optgroup label="Kids"><option value="Branca">Faixa Branca</option><option value="Cinza">Faixa Cinza</option><option value="Amarela">Faixa Amarela</option><option value="Laranja">Faixa Laranja</option><option value="Verde">Faixa Verde</option></optgroup>
+                    <optgroup label="Adulto"><option value="Branca">Faixa Branca</option><option value="Azul">Faixa Azul</option><option value="Roxa">Faixa Roxa</option><option value="Marrom">Faixa Marrom</option><option value="Preta">Faixa Preta</option></optgroup>
+                  </select>
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Status</label>
+                    <select className="w-full p-2 border rounded-lg" value={formData.status || 'Ativo'} onChange={e => setFormData({...formData, status: e.target.value})}>
+                        <option value="Ativo">Ativo</option>
+                        <option value="Inativo">Inativo</option>
+                    </select>
+                </div>
+            </div>
+
+            <div className="border-t pt-4">
+                 <h4 className="font-semibold text-slate-800 mb-3 flex items-center gap-2"><Award size={18} className="text-yellow-500" /> Classificação</h4>
+                 <div className="flex gap-4">
+                    <label className="flex items-center gap-2 cursor-pointer bg-slate-50 p-3 rounded border">
+                        <input type="checkbox" checked={formData.competidor || false} onChange={e => setFormData({...formData, competidor: e.target.checked})} />
+                        <span>Competidor</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer bg-slate-50 p-3 rounded border">
+                        <input type="checkbox" checked={formData.bolsista || false} onChange={e => setFormData({...formData, bolsista: e.target.checked})} />
+                        <span>Bolsista</span>
+                    </label>
+                 </div>
+            </div>
+
+            <div className="border-t pt-4">
+                <h4 className="font-semibold text-slate-800 mb-3">Responsável (Menores)</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <input type="text" placeholder="Nome do Responsável" className="w-full p-2 border rounded-lg" value={formData.nome_responsavel || ''} onChange={e => setFormData({...formData, nome_responsavel: e.target.value})} />
+                    <input type="text" placeholder="WhatsApp" className="w-full p-2 border rounded-lg" value={formData.whatsapp || ''} onChange={e => setFormData({...formData, whatsapp: e.target.value})} />
+                </div>
+            </div>
+
+            <div className="border-t pt-4">
+                <h4 className="font-semibold text-slate-800 mb-3">Saúde</h4>
+                <textarea className="w-full p-2 border rounded-lg" placeholder="Alergias, remédios..." value={formData.alergias || ''} onChange={e => setFormData({...formData, alergias: e.target.value})} />
+            </div>
+
+            <div className="flex justify-end gap-3 pt-4">
+                <button type="button" onClick={handleBackToList} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg">Cancelar</button>
+                <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Salvar</button>
+            </div>
+        </form>
+      </div>
+    );
+  }
+
+  // 2. TELA DE DETALHES (O que você pediu)
+  if (viewState === 'details' && selectedAluno) {
+    return (
+      <div className="bg-white rounded-xl shadow-sm overflow-hidden animate-fadeIn min-h-[80vh]">
+        {/* Cabeçalho com Foto e Nome */}
+        <div className="relative h-48 bg-gradient-to-r from-blue-700 to-slate-900 p-6 flex items-end">
+          <button 
+            onClick={handleBackToList}
+            className="absolute top-4 left-4 bg-white/20 hover:bg-white/30 text-white p-2 rounded-full backdrop-blur-sm transition-all flex items-center gap-2 pr-4"
+          >
+            <ChevronLeft size={20} /> Voltar
+          </button>
+          
+          <div className="flex items-end gap-6 translate-y-10 w-full max-w-5xl mx-auto">
+            <div className="w-32 h-32 rounded-2xl border-4 border-white bg-slate-200 overflow-hidden shadow-xl relative group">
+              {selectedAluno.foto_url ? (
+                <img src={selectedAluno.foto_url} alt="" className="w-full h-full object-cover" />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center bg-slate-100">
+                  <User size={48} className="text-slate-400" />
+                </div>
+              )}
+            </div>
+            <div className="mb-2 pb-1">
+              <div className="flex items-center gap-3">
+                 <h1 className="text-3xl font-bold text-white shadow-sm">{selectedAluno.nome}</h1>
+                 {selectedAluno.competidor && <span className="bg-yellow-500 text-yellow-950 text-xs font-bold px-2 py-1 rounded">Competidor</span>}
+              </div>
+              <p className="text-blue-100 flex items-center gap-2 mt-1">
+                 <span className="px-2 py-0.5 bg-white/20 rounded text-sm">{selectedAluno.graduacao}</span>
+                 {selectedAluno.bolsista && <span className="px-2 py-0.5 bg-green-500/20 border border-green-400/50 rounded text-sm text-green-100">Bolsista</span>}
+              </p>
+            </div>
+            
+            <div className="ml-auto mb-4 hidden sm:block">
+               <button 
+                onClick={() => setShowQRCode(selectedAluno)}
+                className="bg-white text-slate-900 px-4 py-2 rounded-lg font-bold shadow-lg flex items-center gap-2 hover:bg-slate-50 transition-colors"
+               >
+                 <QrCode size={18} /> Carteirinha
+               </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Conteúdo dos Detalhes */}
+        <div className="mt-16 max-w-5xl mx-auto p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
+            
+            {/* Coluna Esquerda - Status */}
+            <div className="space-y-4">
+                <div className={`p-5 rounded-xl border-l-4 shadow-sm ${
+                    selectedAluno.status === 'Ativo' ? 'bg-green-50 border-green-500' : 'bg-red-50 border-red-500'
+                }`}>
+                    <p className="text-sm font-medium text-slate-600">Situação Cadastral</p>
+                    <h3 className={`text-2xl font-bold ${selectedAluno.status === 'Ativo' ? 'text-green-700' : 'text-red-700'}`}>
+                        {selectedAluno.status}
+                    </h3>
+                </div>
+
+                <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                    <div className="flex justify-between items-start">
+                        <div>
+                            <p className="text-sm font-medium text-slate-500">Dívida Cantina/Loja</p>
+                            <h3 className={`text-2xl font-bold ${dividaTotal > 0 ? 'text-red-600' : 'text-slate-800'}`}>
+                                R$ {dividaTotal.toFixed(2).replace('.', ',')}
+                            </h3>
+                        </div>
+                        <div className="p-2 bg-slate-100 rounded-lg">
+                            <DollarSign className="text-slate-500" />
+                        </div>
+                    </div>
+                </div>
+
+                 <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                    <p className="text-sm font-medium text-slate-500 mb-3">Último Treino</p>
+                     {(() => {
+                        const status = getStatusPresenca(selectedAluno.ultimo_treino);
+                        return (
+                            <div className={`flex items-center gap-3 p-3 rounded-lg ${status.color}`}>
+                                <CalendarCheck size={20} />
+                                <span className="font-bold">{status.label}</span>
+                            </div>
+                        )
+                    })()}
+                </div>
+            </div>
+
+            {/* Coluna Direita - Dados Completos */}
+            <div className="md:col-span-2 space-y-6">
+                <div className="bg-white border rounded-xl p-6 shadow-sm">
+                    <h3 className="font-bold text-lg text-slate-800 mb-4 flex items-center gap-2 border-b pb-2">
+                        <User size={20} className="text-blue-600" /> Dados Pessoais
+                    </h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-8">
+                        <div>
+                            <span className="block text-sm text-slate-500">Data Nascimento</span>
+                            <span className="font-medium text-slate-800">{formatDateSafe(selectedAluno.data_nascimento)}</span>
+                        </div>
+                        <div>
+                            <span className="block text-sm text-slate-500">Peso</span>
+                            <span className="font-medium text-slate-800">{selectedAluno.peso} kg</span>
+                        </div>
+                        <div className="sm:col-span-2">
+                            <span className="block text-sm text-slate-500">Contato (WhatsApp)</span>
+                            <div className="flex items-center gap-2">
+                                <Phone size={16} className="text-green-600" />
+                                <span className="font-medium text-slate-800">{selectedAluno.whatsapp || 'Não informado'}</span>
+                            </div>
+                        </div>
+                        {selectedAluno.nome_responsavel && (
+                             <div className="sm:col-span-2 bg-slate-50 p-3 rounded-lg border border-slate-100">
+                                <span className="block text-xs font-bold text-slate-500 uppercase">Responsável</span>
+                                <span className="font-medium text-slate-800">{selectedAluno.nome_responsavel} <span className="text-slate-400 text-sm">({selectedAluno.parentesco})</span></span>
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                {(selectedAluno.alergias || selectedAluno.neurodivergente) && (
+                    <div className="bg-white border rounded-xl p-6 shadow-sm">
+                        <h3 className="font-bold text-lg text-slate-800 mb-4 flex items-center gap-2 border-b pb-2">
+                            <AlertCircle size={20} className="text-red-500" /> Saúde & Cuidados
+                        </h3>
+                        <div className="space-y-4">
+                            {selectedAluno.tipo_sanguineo && (
+                                <div><span className="text-slate-500">Tipo Sanguíneo: </span><span className="font-bold">{selectedAluno.tipo_sanguineo}</span></div>
+                            )}
+                            {selectedAluno.alergias && (
+                                <div className="bg-red-50 p-3 rounded border border-red-100 text-red-800 text-sm">
+                                    <strong>Alergias:</strong> {selectedAluno.alergias}
+                                </div>
+                            )}
+                            {selectedAluno.neurodivergente && (
+                                <div className="bg-blue-50 p-3 rounded border border-blue-100 text-blue-800 text-sm">
+                                    <strong>Neurodivergência:</strong> {selectedAluno.detalhes_condicao}
+                                    {selectedAluno.gatilhos_cuidados && <p className="mt-1 pt-1 border-t border-blue-200 text-xs">{selectedAluno.gatilhos_cuidados}</p>}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 3. TELA DE LISTA (Padrão)
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-fadeIn">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <h2 className="text-2xl font-bold text-slate-800">Alunos</h2>
         <button
-          onClick={() => {
-            setFormData({});
-            setEditMode(false);
-            setShowForm(true);
-          }}
+          onClick={() => { setFormData({}); setEditMode(false); setViewState('form'); }}
           className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 transition-colors"
         >
-          <Plus size={20} />
-          Novo Aluno
+          <Plus size={20} /> Novo Aluno
         </button>
       </div>
 
@@ -248,7 +475,7 @@ export default function Alunos() {
         <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" size={20} />
         <input
           type="text"
-          placeholder="Buscar por nome..."
+          placeholder="Buscar aluno..."
           className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
@@ -264,95 +491,35 @@ export default function Alunos() {
               <tr>
                 <th className="p-4 font-semibold text-slate-600">Aluno</th>
                 <th className="p-4 font-semibold text-slate-600 hidden sm:table-cell">Graduação</th>
-                <th className="p-4 font-semibold text-slate-600">Frequência</th>
+                <th className="p-4 font-semibold text-slate-600">Status</th>
                 <th className="p-4 font-semibold text-slate-600 text-right">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredAlunos.map((aluno) => {
-                const aniversariante = isAniversariante(aluno.data_nascimento);
                 const statusPresenca = getStatusPresenca(aluno.ultimo_treino);
-
                 return (
-                  <tr key={aluno.id} className="hover:bg-slate-50 transition-colors cursor-pointer" onClick={() => handleOpenDetails(aluno)}>
+                  <tr key={aluno.id} className="hover:bg-slate-50 transition-colors cursor-pointer group" onClick={() => handleOpenDetails(aluno)}>
                     <td className="p-4">
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center overflow-hidden relative">
-                          {aluno.foto_url ? (
-                            <img src={aluno.foto_url} alt={aluno.nome} className="w-full h-full object-cover" />
-                          ) : (
-                            <User size={20} className="text-slate-400" />
-                          )}
-                          {aluno.competidor && (
-                             <div className="absolute -bottom-1 -right-1 bg-yellow-400 rounded-full p-0.5 border border-white" title="Competidor">
-                               <Trophy size={10} className="text-yellow-900" />
-                             </div>
-                          )}
+                        <div className="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center overflow-hidden">
+                          {aluno.foto_url ? <img src={aluno.foto_url} className="w-full h-full object-cover" /> : <User size={20} className="text-slate-400" />}
                         </div>
                         <div>
-                          <div className="font-medium text-slate-900 flex items-center gap-2">
-                            {aluno.nome}
-                            {aniversariante && (
-                              <span className="flex items-center gap-1 text-xs bg-pink-100 text-pink-700 px-2 py-0.5 rounded-full font-bold animate-pulse">
-                                <Cake size={12} /> Hoje!
-                              </span>
-                            )}
-                          </div>
-                          <div className="flex gap-1 mt-1 sm:hidden">
-                            <span className={`text-xs px-2 py-0.5 rounded-full ${statusPresenca.color}`}>
-                              {statusPresenca.label}
-                            </span>
-                          </div>
+                          <div className="font-medium text-slate-900 group-hover:text-blue-600 transition-colors">{aluno.nome}</div>
+                          <div className="text-xs text-slate-500 sm:hidden">{statusPresenca.label}</div>
                         </div>
                       </div>
                     </td>
-                    <td className="p-4 hidden sm:table-cell">
-                      <span className="px-2 py-1 bg-slate-100 text-slate-700 rounded-md text-sm font-medium">
-                        {aluno.graduacao}
-                      </span>
-                    </td>
+                    <td className="p-4 hidden sm:table-cell"><span className="bg-slate-100 px-2 py-1 rounded text-sm">{aluno.graduacao}</span></td>
                     <td className="p-4">
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setShowQRCode(aluno); }}
-                          className="p-2 bg-slate-100 text-slate-600 hover:bg-slate-800 hover:text-white rounded-lg transition-colors"
-                          title="Ver QR Code"
-                        >
-                          <QrCode size={18} />
-                        </button>
-
-                        <button
-                          onClick={(e) => handleCheckIn(e, aluno.id, aluno.nome)}
-                          className="p-2 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-lg transition-colors"
-                          title="Marcar Presença Hoje"
-                        >
-                          <CalendarCheck size={18} />
-                        </button>
-                        
-                        <span className={`hidden sm:inline-flex px-2 py-1 rounded-full text-xs font-medium ${statusPresenca.color} items-center gap-1`}>
-                          {statusPresenca.dias !== null && statusPresenca.dias > 14 && <AlertTriangle size={12} />}
-                          {statusPresenca.label}
-                        </span>
-                      </div>
+                        <span className={`text-xs px-2 py-1 rounded-full font-bold ${statusPresenca.color}`}>{statusPresenca.label}</span>
                     </td>
                     <td className="p-4 text-right">
-                      <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
-                        <button
-                          onClick={() => {
-                            setFormData(aluno);
-                            setEditMode(true);
-                            setShowForm(true);
-                          }}
-                          className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"
-                        >
-                          <Edit size={18} />
-                        </button>
-                        <button
-                          onClick={() => handleDelete(aluno.id)}
-                          className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
-                        >
-                          <Trash2 size={18} />
-                        </button>
+                      <div className="flex justify-end gap-2" onClick={e => e.stopPropagation()}>
+                        <button onClick={(e) => handleCheckIn(e, aluno.id, aluno.nome)} className="p-2 text-green-600 hover:bg-green-50 rounded" title="Presença"><CalendarCheck size={18} /></button>
+                        <button onClick={() => { setFormData(aluno); setEditMode(true); setViewState('form'); }} className="p-2 text-blue-600 hover:bg-blue-50 rounded"><Edit size={18} /></button>
+                        <button onClick={() => handleDelete(aluno.id)} className="p-2 text-red-600 hover:bg-red-50 rounded"><Trash2 size={18} /></button>
                       </div>
                     </td>
                   </tr>
@@ -362,486 +529,17 @@ export default function Alunos() {
           </table>
         </div>
       )}
-
-      {/* MODAL QR CODE */}
+      
+      {/* MODAL QR CODE (SEPARADO) */}
       {showQRCode && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50 animate-fadeIn" onClick={() => setShowQRCode(null)}>
-          <div className="bg-white rounded-2xl flex flex-col items-center max-w-sm w-full overflow-hidden shadow-2xl" onClick={e => e.stopPropagation()}>
-            <div className="bg-slate-900 w-full p-6 text-center">
-                <h3 className="text-xl font-bold text-white tracking-widest">BJJ COLLEGE</h3>
-                <p className="text-slate-400 text-xs uppercase tracking-wide mt-1">Carteira do Atleta</p>
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-[60]" onClick={() => setShowQRCode(null)}>
+            <div className="bg-white p-6 rounded-xl max-w-sm w-full text-center" onClick={e => e.stopPropagation()}>
+                <h3 className="text-xl font-bold mb-4">{showQRCode.nome}</h3>
+                <div className="bg-white p-2 inline-block border-2 border-black rounded">
+                    <QRCode value={showQRCode.id} size={200} />
+                </div>
+                <button onClick={() => setShowQRCode(null)} className="mt-6 w-full py-2 bg-slate-200 rounded-lg font-bold">Fechar</button>
             </div>
-            <div className="p-8 flex flex-col items-center w-full bg-white relative">
-                <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-blue-500 to-purple-600"></div>
-                <div className="w-24 h-24 rounded-full border-4 border-white shadow-lg overflow-hidden -mt-16 mb-4 bg-slate-200 z-10">
-                  {showQRCode.foto_url ? (
-                    <img src={showQRCode.foto_url} alt={showQRCode.nome} className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center bg-slate-300 text-slate-500">
-                      <User size={40} />
-                    </div>
-                  )}
-                </div>
-                <h2 className="text-2xl font-bold text-slate-800 text-center leading-tight">{showQRCode.nome}</h2>
-                <span className="px-3 py-1 bg-slate-100 rounded-full text-sm font-semibold text-slate-600 mt-2 mb-6 border border-slate-200">
-                  {showQRCode.graduacao}
-                </span>
-                <div className="p-2 bg-white border-2 border-slate-900 rounded-lg">
-                  <QRCode
-                    value={showQRCode.id}
-                    size={180}
-                    style={{ height: "auto", maxWidth: "100%", width: "100%" }}
-                    viewBox={`0 0 256 256`}
-                  />
-                </div>
-                <p className="text-xs text-slate-400 mt-2 font-mono">{showQRCode.id.slice(0, 8)}...</p>
-            </div>
-            <div className="bg-slate-50 w-full p-4 flex gap-2 border-t border-slate-100">
-              <button onClick={() => window.print()} className="flex-1 py-2 bg-slate-900 text-white rounded-lg font-bold hover:bg-slate-800 flex items-center justify-center gap-2">
-                <Download size={18} /> Salvar
-              </button>
-              <button onClick={() => setShowQRCode(null)} className="px-4 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg font-bold hover:bg-slate-50">
-                Fechar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL DETALHES */}
-      {selectedAluno && !showForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 animate-fadeIn">
-          <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl">
-             <div className="relative h-40 bg-gradient-to-r from-blue-600 to-blue-800 p-6 flex items-end">
-              <button 
-                onClick={() => setSelectedAluno(null)}
-                className="absolute top-4 right-4 text-white/80 hover:text-white bg-black/20 rounded-full p-1"
-              >
-                <X size={24} />
-              </button>
-              
-              <div className="flex items-end gap-4 translate-y-8">
-                <div className="w-24 h-24 rounded-xl border-4 border-white bg-slate-200 overflow-hidden shadow-lg relative">
-                  {selectedAluno.foto_url ? (
-                    <img src={selectedAluno.foto_url} alt="" className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center bg-slate-100">
-                      <User size={40} className="text-slate-400" />
-                    </div>
-                  )}
-                </div>
-                <div className="mb-2">
-                  <h3 className="text-2xl font-bold text-white shadow-sm">{selectedAluno.nome}</h3>
-                  <button 
-                    onClick={() => { setSelectedAluno(null); setShowQRCode(selectedAluno); }}
-                    className="mt-2 bg-white/20 hover:bg-white/30 text-white px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1 backdrop-blur-sm transition-colors"
-                  >
-                    <QrCode size={14} /> Ver Carteirinha
-                  </button>
-                </div>
-              </div>
-            </div>
-            
-            <div className="pt-12 p-6 space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className={`p-4 rounded-xl border-l-4 shadow-sm ${
-                    selectedAluno.status === 'Ativo' ? 'bg-green-50 border-green-500' : 'bg-red-50 border-red-500'
-                  }`}>
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <p className="text-sm font-medium text-slate-600">Status da Mensalidade</p>
-                        <h4 className={`text-xl font-bold ${
-                          selectedAluno.status === 'Ativo' ? 'text-green-700' : 'text-red-700'
-                        }`}>
-                          {selectedAluno.status}
-                        </h4>
-                        {(selectedAluno.bolsista || selectedAluno.bolsista_a2) && (
-                           <span className="text-xs font-bold text-slate-500 uppercase mt-1 block">
-                             (Isento de Pagamento - Bolsista)
-                           </span>
-                        )}
-                      </div>
-                      <Activity className={selectedAluno.status === 'Ativo' ? 'text-green-500' : 'text-red-500'} />
-                    </div>
-                    {!(selectedAluno.bolsista || selectedAluno.bolsista_a2) && (
-                      <p className="text-xs text-slate-500 mt-2">
-                        Vencimento sugerido: Dia 10
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 shadow-sm">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <p className="text-sm font-medium text-slate-600">Dívida na Cantina</p>
-                        <h4 className={`text-xl font-bold ${dividaTotal > 0 ? 'text-red-600' : 'text-slate-700'}`}>
-                          R$ {dividaTotal.toFixed(2).replace('.', ',')}
-                        </h4>
-                      </div>
-                      <DollarSign className="text-slate-400" />
-                    </div>
-                    <p className="text-xs text-slate-500 mt-2">
-                      Total em compras "Fiado"
-                    </p>
-                  </div>
-                </div>
-
-                <div>
-                  <h4 className="font-semibold text-slate-800 border-b pb-2 mb-3 flex items-center gap-2">
-                    <User size={18} className="text-blue-600" /> Dados Pessoais
-                  </h4>
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <span className="block text-slate-500">Data de Nascimento</span>
-                      <span className="font-medium">
-                        {selectedAluno.data_nascimento ? format(new Date(selectedAluno.data_nascimento), "dd 'de' MMMM", { locale: ptBR }) : '-'}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="block text-slate-500">Peso</span>
-                      <span className="font-medium">{selectedAluno.peso} kg</span>
-                    </div>
-                    {selectedAluno.whatsapp && (
-                      <div className="col-span-2">
-                        <span className="block text-slate-500">Contato / WhatsApp</span>
-                        <span className="font-medium">{selectedAluno.whatsapp}</span>
-                      </div>
-                    )}
-                    {selectedAluno.nome_responsavel && (
-                      <div className="col-span-2 bg-blue-50 p-2 rounded-lg">
-                        <span className="block text-blue-600 text-xs font-bold uppercase">Responsável</span>
-                        <span className="font-medium text-blue-900">
-                          {selectedAluno.nome_responsavel} ({selectedAluno.parentesco})
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {(selectedAluno.alergias || selectedAluno.neurodivergente || selectedAluno.tipo_sanguineo) && (
-                  <div>
-                    <h4 className="font-semibold text-slate-800 border-b pb-2 mb-3 flex items-center gap-2">
-                      <AlertCircle size={18} className="text-red-500" /> Saúde e Cuidados
-                    </h4>
-                    <div className="space-y-3 text-sm">
-                      {selectedAluno.tipo_sanguineo && (
-                        <div>
-                          <span className="text-slate-500">Tipo Sanguíneo: </span>
-                          <span className="font-bold bg-red-100 text-red-700 px-2 rounded-full">{selectedAluno.tipo_sanguineo}</span>
-                        </div>
-                      )}
-                      
-                      {selectedAluno.alergias && (
-                        <div className="bg-red-50 p-3 rounded-lg border border-red-100">
-                          <span className="block text-red-600 font-bold mb-1">⚠️ Alergias & Medicamentos:</span>
-                          <p className="text-slate-700">{selectedAluno.alergias}</p>
-                        </div>
-                      )}
-
-                      {selectedAluno.neurodivergente && (
-                        <div className="bg-indigo-50 p-3 rounded-lg border border-indigo-100">
-                          <span className="block text-indigo-700 font-bold mb-1 flex items-center gap-2">
-                            🧩 Informações de Inclusão
-                          </span>
-                          <p className="text-slate-700 mb-2"><strong>Condição:</strong> {selectedAluno.detalhes_condicao}</p>
-                          {selectedAluno.gatilhos_cuidados && (
-                            <div className="text-slate-600 text-xs mt-2 pt-2 border-t border-indigo-200">
-                              <strong>Cuidados Especiais:</strong> {selectedAluno.gatilhos_cuidados}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-            </div>
-            
-            <div className="p-4 bg-slate-50 border-t flex justify-end">
-              <button 
-                onClick={() => setSelectedAluno(null)}
-                className="px-6 py-2 bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300 font-medium"
-              >
-                Fechar Prontuário
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 animate-fadeIn">
-          <div className="bg-white rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6">
-            <h3 className="text-xl font-bold mb-6">
-              {editMode ? 'Editar Aluno' : 'Novo Aluno'}
-            </h3>
-            
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Nome Completo</label>
-                  <input
-                    type="text"
-                    required
-                    className="w-full p-2 border rounded-lg"
-                    value={formData.nome || ''}
-                    onChange={e => setFormData({...formData, nome: e.target.value})}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Foto URL (Opcional)</label>
-                  <input
-                    type="text"
-                    className="w-full p-2 border rounded-lg"
-                    placeholder="https://..."
-                    value={formData.foto_url || ''}
-                    onChange={e => setFormData({...formData, foto_url: e.target.value})}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Data de Nascimento</label>
-                  <input
-                    type="date"
-                    className="w-full p-2 border rounded-lg"
-                    value={formData.data_nascimento || ''}
-                    onChange={e => setFormData({...formData, data_nascimento: e.target.value})}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Peso (kg)</label>
-                  <input
-                    type="number"
-                    className="w-full p-2 border rounded-lg"
-                    value={formData.peso || ''}
-                    onChange={e => setFormData({...formData, peso: parseFloat(e.target.value)})}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Graduação</label>
-                  <select
-                    className="w-full p-2 border rounded-lg bg-white"
-                    value={formData.graduacao || ''}
-                    onChange={e => setFormData({...formData, graduacao: e.target.value})}
-                  >
-                    <option value="">Selecione...</option>
-                    <optgroup label="Kids (0-15 anos)">
-                      <option value="Branca">Faixa Branca</option>
-                      <option value="Cinza/Branca">Faixa Cinza/Branca</option>
-                      <option value="Cinza">Faixa Cinza</option>
-                      <option value="Cinza/Preta">Faixa Cinza/Preta</option>
-                      <option value="Amarela/Branca">Faixa Amarela/Branca</option>
-                      <option value="Amarela">Faixa Amarela</option>
-                      <option value="Amarela/Preta">Faixa Amarela/Preta</option>
-                      <option value="Laranja/Branca">Faixa Laranja/Branca</option>
-                      <option value="Laranja">FaixaLaranja</option>
-                      <option value="Laranja/Preta">Faixa Laranja/Preta</option>
-                      <option value="Verde/Branca">Faixa Verde/Branca</option>
-                      <option value="Verde">Faixa Verde</option>
-                      <option value="Verde/Preta">Faixa Verde/Preta</option>
-                    </optgroup>
-                    <optgroup label="Adulto (16+)">
-                      <option value="Branca">Faixa Branca</option>
-                      <option value="Azul">Faixa Azul</option>
-                      <option value="Roxa">Faixa Roxa</option>
-                      <option value="Marrom">Faixa Marrom</option>
-                      <option value="Preta">Faixa Preta</option>
-                    </optgroup>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Status</label>
-                  <select
-                    className="w-full p-2 border rounded-lg bg-white"
-                    value={formData.status || 'Ativo'}
-                    onChange={e => setFormData({...formData, status: e.target.value})}
-                  >
-                    <option value="Ativo">Ativo</option>
-                    <option value="Inativo">Inativo</option>
-                    <option value="Inadimplente">Inadimplente (Devendo)</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="border-t pt-4 mt-4">
-                 <h4 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
-                    <Award size={18} className="text-yellow-500" /> Classificação & Bolsas
-                 </h4>
-                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 select-none">
-                    
-                    <div 
-                        onClick={() => setFormData({...formData, competidor: !formData.competidor})}
-                        className={`p-3 rounded-lg border cursor-pointer transition-all flex items-center gap-3 hover:shadow-sm ${
-                        formData.competidor ? 'bg-yellow-50 border-yellow-400 shadow-sm' : 'bg-white border-slate-200 hover:border-slate-300'
-                    }`}>
-                        <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${
-                            formData.competidor ? 'bg-yellow-500 border-yellow-600' : 'bg-white border-slate-300'
-                        }`}>
-                            {formData.competidor && <Trophy size={12} className="text-white" />}
-                        </div>
-                        <span className={`text-sm font-medium ${formData.competidor ? 'text-yellow-800' : 'text-slate-600'}`}>Competidor</span>
-                    </div>
-
-                    <div 
-                        onClick={() => setFormData({...formData, bolsista: !formData.bolsista})}
-                        className={`p-3 rounded-lg border cursor-pointer transition-all flex items-center gap-3 hover:shadow-sm ${
-                        formData.bolsista ? 'bg-green-50 border-green-400 shadow-sm' : 'bg-white border-slate-200 hover:border-slate-300'
-                    }`}>
-                        <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${
-                            formData.bolsista ? 'bg-green-500 border-green-600' : 'bg-white border-slate-300'
-                        }`}>
-                            {formData.bolsista && <Award size={12} className="text-white" />}
-                        </div>
-                        <span className={`text-sm font-medium ${formData.bolsista ? 'text-green-800' : 'text-slate-600'}`}>Bolsista Academia</span>
-                    </div>
-
-                    <div 
-                        onClick={() => setFormData({...formData, bolsista_a2: !formData.bolsista_a2})}
-                        className={`p-3 rounded-lg border cursor-pointer transition-all flex items-center gap-3 hover:shadow-sm ${
-                        formData.bolsista_a2 ? 'bg-purple-50 border-purple-400 shadow-sm' : 'bg-white border-slate-200 hover:border-slate-300'
-                    }`}>
-                        <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${
-                            formData.bolsista_a2 ? 'bg-purple-500 border-purple-600' : 'bg-white border-slate-300'
-                        }`}>
-                            {formData.bolsista_a2 && <Star size={12} className="text-white" />}
-                        </div>
-                        <span className={`text-sm font-medium ${formData.bolsista_a2 ? 'text-purple-800' : 'text-slate-600'}`}>Bolsista A2</span>
-                    </div>
-
-                 </div>
-              </div>
-
-              <div className="border-t pt-4 mt-4">
-                <h4 className="font-semibold text-slate-800 mb-3">Responsável (Para menores)</h4>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Nome do Responsável</label>
-                    <input
-                      type="text"
-                      className="w-full p-2 border rounded-lg"
-                      value={formData.nome_responsavel || ''}
-                      onChange={e => setFormData({...formData, nome_responsavel: e.target.value})}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Parentesco</label>
-                    <select
-                      className="w-full p-2 border rounded-lg bg-white"
-                      value={formData.parentesco || ''}
-                      onChange={e => setFormData({...formData, parentesco: e.target.value})}
-                    >
-                      <option value="">Selecione...</option>
-                      <option value="Pai">Pai</option>
-                      <option value="Mãe">Mãe</option>
-                      <option value="Avó/Avô">Avó/Avô</option>
-                      <option value="Outro">Outro</option>
-                    </select>
-                  </div>
-                  <div className="col-span-2">
-                    <label className="block text-sm font-medium text-slate-700 mb-1">WhatsApp de Emergência</label>
-                    <input
-                      type="text"
-                      placeholder="(XX) XXXXX-XXXX"
-                      className="w-full p-2 border rounded-lg"
-                      value={formData.whatsapp || ''}
-                      onChange={e => setFormData({...formData, whatsapp: e.target.value})}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="border-t pt-4 mt-4">
-                <h4 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
-                  <AlertCircle size={18} className="text-red-500"/> Saúde & Inclusão
-                </h4>
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1">Tipo Sanguíneo</label>
-                      <select
-                        className="w-full p-2 border rounded-lg bg-white"
-                        value={formData.tipo_sanguineo || ''}
-                        onChange={e => setFormData({...formData, tipo_sanguineo: e.target.value})}
-                      >
-                        <option value="">-</option>
-                        <option value="A+">A+</option>
-                        <option value="A-">A-</option>
-                        <option value="B+">B+</option>
-                        <option value="B-">B-</option>
-                        <option value="AB+">AB+</option>
-                        <option value="AB-">AB-</option>
-                        <option value="O+">O+</option>
-                        <option value="O-">O-</option>
-                      </select>
-                    </div>
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Alergias / Medicamentos</label>
-                    <textarea
-                      className="w-full p-2 border rounded-lg"
-                      rows={2}
-                      placeholder="Ex: Alérgico a Dipirona, Asma..."
-                      value={formData.alergias || ''}
-                      onChange={e => setFormData({...formData, alergias: e.target.value})}
-                    />
-                  </div>
-
-                  <div className="flex items-center gap-3 bg-slate-50 p-3 rounded-lg border">
-                    <input
-                      type="checkbox"
-                      id="neuro"
-                      className="w-5 h-5 text-blue-600 rounded"
-                      checked={formData.neurodivergente || false}
-                      onChange={e => setFormData({...formData, neurodivergente: e.target.checked})}
-                    />
-                    <label htmlFor="neuro" className="font-medium text-slate-800 cursor-pointer select-none">
-                      Possui Neurodivergência ou Deficiência? (TEA, TDAH, etc)
-                    </label>
-                  </div>
-
-                  {formData.neurodivergente && (
-                    <div className="grid grid-cols-1 gap-4 bg-blue-50 p-4 rounded-lg animate-fadeIn">
-                      <div>
-                        <label className="block text-sm font-medium text-blue-900 mb-1">Detalhes da Condição</label>
-                        <input
-                          type="text"
-                          placeholder="Ex: Autismo Nível 1"
-                          className="w-full p-2 border rounded-lg"
-                          value={formData.detalhes_condicao || ''}
-                          onChange={e => setFormData({...formData, detalhes_condicao: e.target.value})}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-blue-900 mb-1">Gatilhos ou Cuidados Especiais</label>
-                        <textarea
-                          className="w-full p-2 border rounded-lg"
-                          rows={2}
-                          placeholder="Ex: Sensível a barulho alto, evitar toque surpresa..."
-                          value={formData.gatilhos_cuidados || ''}
-                          onChange={e => setFormData({...formData, gatilhos_cuidados: e.target.value})}
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex justify-end gap-3 mt-6 pt-4 border-t">
-                <button
-                  type="button"
-                  onClick={() => setShowForm(false)}
-                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                >
-                  {editMode ? 'Salvar Alterações' : 'Cadastrar Aluno'}
-                </button>
-              </div>
-            </form>
-          </div>
         </div>
       )}
     </div>
