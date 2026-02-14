@@ -1,17 +1,5 @@
 import React, { useState } from 'react';
-import { 
-  LayoutDashboard, 
-  Users, 
-  DollarSign, 
-  ShoppingBag, // <--- Ícone de Loja
-  Settings, 
-  LogOut, 
-  Menu, 
-  X, 
-  Terminal,
-  GraduationCap,
-  FileText 
-} from 'lucide-react';
+import { LayoutDashboard, Users, DollarSign, ShoppingBag, Settings, LogOut, Menu, X, Terminal, GraduationCap, FileText } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 interface LayoutProps {
@@ -30,33 +18,24 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
     { id: 'alunos', label: 'Alunos', icon: Users },
     { id: 'instrutores', label: 'Instrutores', icon: GraduationCap },
     { id: 'financeiro', label: 'Financeiro', icon: DollarSign },
-    { id: 'loja', label: 'Loja', icon: ShoppingBag }, // <--- Mudado aqui
+    { id: 'loja', label: 'Loja', icon: ShoppingBag },
     { id: 'configuracoes', label: 'Configurações', icon: Settings },
     { id: 'dev', label: 'Dev Panel', icon: Terminal, hidden: true }, 
   ];
 
-  const handleNavigate = (id: string) => {
-    onNavigate(id);
-    setIsMobileMenuOpen(false);
-  };
+  const handleNavigate = (id: string) => { onNavigate(id); setIsMobileMenuOpen(false); };
+
+  // Lógica para pegar o nome
+  const userName = user?.email 
+    ? user.email.split('@')[0].charAt(0).toUpperCase() + user.email.split('@')[0].slice(1) 
+    : 'Usuário';
 
   return (
     <div className="min-h-screen bg-slate-50 flex">
-      <aside 
-        className={`
-          fixed inset-y-0 left-0 z-50 w-64 bg-slate-900 text-white transition-transform duration-300 ease-in-out
-          md:relative md:translate-x-0
-          ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}
-        `}
-      >
+      <aside className={`fixed inset-y-0 left-0 z-50 w-64 bg-slate-900 text-white transition-transform duration-300 ease-in-out md:relative md:translate-x-0 ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="p-6 flex justify-between items-center">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">BJJ COLLEGE</h1>
-            <p className="text-slate-400 text-xs mt-1">Sistema de Gestão</p>
-          </div>
-          <button onClick={() => setIsMobileMenuOpen(false)} className="md:hidden text-slate-400 hover:text-white">
-            <X size={24} />
-          </button>
+          <div><h1 className="text-2xl font-bold tracking-tight">BJJ COLLEGE</h1><p className="text-slate-400 text-xs mt-1">Sistema de Gestão</p></div>
+          <button onClick={() => setIsMobileMenuOpen(false)} className="md:hidden text-slate-400 hover:text-white"><X size={24} /></button>
         </div>
 
         <nav className="mt-6 px-4 space-y-2">
@@ -64,17 +43,8 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
             const Icon = item.icon;
             const isActive = currentPage === item.id;
             return (
-              <button
-                key={item.id}
-                onClick={() => handleNavigate(item.id)}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                  isActive 
-                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' 
-                    : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-                }`}
-              >
-                <Icon size={20} />
-                <span className="font-medium">{item.label}</span>
+              <button key={item.id} onClick={() => handleNavigate(item.id)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${isActive ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
+                <Icon size={20} /><span className="font-medium">{item.label}</span>
               </button>
             );
           })}
@@ -82,42 +52,27 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
 
         <div className="absolute bottom-0 w-full p-4 border-t border-slate-800 bg-slate-900">
             <div className="flex items-center gap-3 px-4 mb-4">
-                <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center font-bold text-sm">
-                    {user?.email?.charAt(0).toUpperCase()}
+                <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center font-bold text-sm text-white">
+                    {userName.charAt(0)}
                 </div>
                 <div className="overflow-hidden">
-                    <p className="text-sm font-medium truncate text-white">Usuário</p>
+                    <p className="text-sm font-medium truncate text-white">Olá, {userName}</p>
                     <p className="text-xs text-slate-400 truncate">{user?.email}</p>
                 </div>
             </div>
-          <button
-            onClick={() => signOut()}
-            className="w-full flex items-center gap-3 px-4 py-2 text-red-400 hover:bg-red-500/10 hover:text-red-300 rounded-lg transition-colors"
-          >
-            <LogOut size={20} />
-            <span className="font-medium">Sair</span>
-          </button>
+          <button onClick={() => signOut()} className="w-full flex items-center gap-3 px-4 py-2 text-red-400 hover:bg-red-500/10 hover:text-red-300 rounded-lg transition-colors"><LogOut size={20} /><span className="font-medium">Sair</span></button>
         </div>
       </aside>
 
       <main className="flex-1 h-screen overflow-y-auto w-full">
         <div className="md:hidden bg-white p-4 flex items-center justify-between border-b shadow-sm sticky top-0 z-40">
            <h1 className="font-bold text-lg text-slate-800">BJJ COLLEGE</h1>
-           <button onClick={() => setIsMobileMenuOpen(true)} className="p-2 bg-slate-100 rounded-lg text-slate-600">
-             <Menu size={24} />
-           </button>
+           <button onClick={() => setIsMobileMenuOpen(true)} className="p-2 bg-slate-100 rounded-lg text-slate-600"><Menu size={24} /></button>
         </div>
-        <div className="p-4 md:p-8 max-w-7xl mx-auto">
-          {children}
-        </div>
+        <div className="p-4 md:p-8 max-w-7xl mx-auto">{children}</div>
       </main>
 
-      {isMobileMenuOpen && (
-        <div 
-            className="fixed inset-0 bg-black/50 z-40 md:hidden"
-            onClick={() => setIsMobileMenuOpen(false)}
-        />
-      )}
+      {isMobileMenuOpen && (<div className="fixed inset-0 bg-black/50 z-40 md:hidden" onClick={() => setIsMobileMenuOpen(false)} />)}
     </div>
   );
 }
