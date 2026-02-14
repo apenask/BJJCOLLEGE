@@ -6,7 +6,7 @@ import Layout from './components/Layout';
 import Dashboard from './components/Dashboard';
 import Alunos from './components/Alunos';
 import Financeiro from './components/Financeiro';
-import Cantina from './components/Cantina';
+import Loja from './components/Loja';
 import Configuracoes from './components/Configuracoes';
 import DevPanel from './components/DevPanel'; // Importação necessária
 import Instrutores from './components/Instrutores';
@@ -56,7 +56,7 @@ function AppContent() {
       {currentPage === 'relatorios' && <Relatorios />}
       {currentPage === 'alunos' && <Alunos />}
       {currentPage === 'financeiro' && <Financeiro />}
-      {currentPage === 'cantina' && <Cantina />}
+      {currentPage === 'loja' && <Loja />}
       {currentPage === 'configuracoes' && <Configuracoes />}
       {currentPage === 'dev' && <DevPanel />}
       {currentPage === 'instrutores' && <Instrutores />} {/* Nova rota para Instrutores */}

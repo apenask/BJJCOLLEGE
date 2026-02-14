@@ -3,14 +3,14 @@ import {
   LayoutDashboard, 
   Users, 
   DollarSign, 
-  Coffee, 
+  ShoppingBag, // <--- Ícone de Loja
   Settings, 
   LogOut, 
   Menu, 
   X, 
   Terminal,
   GraduationCap,
-  FileText // <--- Novo ícone importado
+  FileText 
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -26,24 +26,22 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
 
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'alunos', label: 'Alunos', icon: Users },
     { id: 'relatorios', label: 'Relatórios', icon: FileText },
-    { id: 'instrutores', label: 'Instrutores', icon: GraduationCap }, // <--- Novo Item
+    { id: 'alunos', label: 'Alunos', icon: Users },
+    { id: 'instrutores', label: 'Instrutores', icon: GraduationCap },
     { id: 'financeiro', label: 'Financeiro', icon: DollarSign },
-    { id: 'cantina', label: 'Cantina', icon: Coffee },
+    { id: 'loja', label: 'Loja', icon: ShoppingBag }, // <--- Mudado aqui
     { id: 'configuracoes', label: 'Configurações', icon: Settings },
-    // Item secreto para devs
     { id: 'dev', label: 'Dev Panel', icon: Terminal, hidden: true }, 
   ];
 
   const handleNavigate = (id: string) => {
     onNavigate(id);
-    setIsMobileMenuOpen(false); // Fecha o menu ao clicar (no mobile)
+    setIsMobileMenuOpen(false);
   };
 
   return (
     <div className="min-h-screen bg-slate-50 flex">
-      {/* 1. Menu Lateral (Desktop: fixo, Mobile: slide-over) */}
       <aside 
         className={`
           fixed inset-y-0 left-0 z-50 w-64 bg-slate-900 text-white transition-transform duration-300 ease-in-out
@@ -56,7 +54,6 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
             <h1 className="text-2xl font-bold tracking-tight">BJJ COLLEGE</h1>
             <p className="text-slate-400 text-xs mt-1">Sistema de Gestão</p>
           </div>
-          {/* Botão fechar (só mobile) */}
           <button onClick={() => setIsMobileMenuOpen(false)} className="md:hidden text-slate-400 hover:text-white">
             <X size={24} />
           </button>
@@ -103,23 +100,18 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
         </div>
       </aside>
 
-      {/* 2. Conteúdo Principal */}
       <main className="flex-1 h-screen overflow-y-auto w-full">
-        {/* Barra Superior Mobile (Hambúrguer) */}
         <div className="md:hidden bg-white p-4 flex items-center justify-between border-b shadow-sm sticky top-0 z-40">
            <h1 className="font-bold text-lg text-slate-800">BJJ COLLEGE</h1>
            <button onClick={() => setIsMobileMenuOpen(true)} className="p-2 bg-slate-100 rounded-lg text-slate-600">
              <Menu size={24} />
            </button>
         </div>
-
-        {/* Área de Conteúdo */}
         <div className="p-4 md:p-8 max-w-7xl mx-auto">
           {children}
         </div>
       </main>
 
-      {/* Overlay Escuro (Fundo quando menu mobile abre) */}
       {isMobileMenuOpen && (
         <div 
             className="fixed inset-0 bg-black/50 z-40 md:hidden"

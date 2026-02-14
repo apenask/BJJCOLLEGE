@@ -6,7 +6,10 @@ import {
   Wallet, 
   Calendar,
   HandCoins,
-  Users
+  Users,
+  Banknote,
+  QrCode,
+  CreditCard
 } from 'lucide-react';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -20,7 +23,12 @@ export default function Dashboard({ onNavigate }: { onNavigate: (page: string) =
     saldoLiquido: 0,
     totalAlunos: 0,
     alunosAtivos: 0,
-    alunosInadimplentes: 0
+    alunosInadimplentes: 0,
+    // Novos campos para detalhamento
+    pagtoDinheiro: 0,
+    pagtoPix: 0,
+    pagtoCredito: 0,
+    pagtoDebito: 0
   });
 
   useEffect(() => {
@@ -42,11 +50,10 @@ export default function Dashboard({ onNavigate }: { onNavigate: (page: string) =
         .lte('data', fimMes);
 
       // 2. Buscar Pagamentos REAIS feitos aos Instrutores neste mês
-      // AQUI MUDOU: Não calculamos mais, buscamos o que foi pago de fato.
       const { data: pagamentosInstrutores } = await supabase
         .from('pagamentos_instrutores')
         .select('valor_pago')
-        .eq('mes_referencia', hoje.toISOString().slice(0, 7)); // Ex: '2023-10'
+        .eq('mes_referencia', hoje.toISOString().slice(0, 7));
 
       // 3. Buscar Alunos
       const { data: alunos } = await supabase.from('alunos').select('*');
@@ -55,14 +62,50 @@ export default function Dashboard({ onNavigate }: { onNavigate: (page: string) =
       let receita = 0;
       let despesas = 0;
       
+      // Detalhamento por meio de pagamento
+      let pDinheiro = 0;
+      let pPix = 0;
+      let pCredito = 0;
+      let pDebito = 0;
+
       // Soma o que foi pago aos instrutores
       const totalComissoesPagas = pagamentosInstrutores?.reduce((acc, p) => acc + Number(p.valor_pago), 0) || 0;
 
       transacoes?.forEach(t => {
+        const valor = Number(t.valor);
+
         if (t.tipo === 'Receita') {
-            receita += Number(t.valor);
+            receita += valor;
+
+            // LÓGICA DE DETALHAMENTO DE PAGAMENTO (Igual ao Relatório)
+            if (t.detalhes_pagamento) {
+                const dp = t.detalhes_pagamento;
+
+                // CASO 1: Split de Pagamento (Mensalidade dividida)
+                if (dp.metodos && Array.isArray(dp.metodos)) {
+                    dp.metodos.forEach((m: any) => {
+                        const v = Number(m.valor);
+                        if (m.metodo === 'Dinheiro') pDinheiro += v;
+                        else if (m.metodo === 'Pix') pPix += v;
+                        else if (m.metodo === 'Cartao') pCredito += v; // Assumindo crédito se não especificado no split simples
+                    });
+                }
+                // CASO 2: Pagamento Loja / Simples
+                else if (dp.pagamento) {
+                    const pag = dp.pagamento;
+                    // O valor total da transação vai para o método escolhido
+                    if (pag.metodo === 'Dinheiro') pDinheiro += valor;
+                    else if (pag.metodo === 'Pix') pPix += valor;
+                    else if (pag.metodo === 'Cartao') {
+                        if (pag.tipo === 'Débito') pDebito += valor;
+                        else pCredito += valor;
+                    }
+                } 
+                // CASO 3: Sem detalhe, mas é receita (Assume Pix ou Outros? Vamos deixar sem somar no detalhe para ser preciso)
+            }
+
         } else {
-            despesas += Number(t.valor);
+            despesas += valor;
         }
       });
 
@@ -75,13 +118,17 @@ export default function Dashboard({ onNavigate }: { onNavigate: (page: string) =
 
       setStats({
         receitaBruta: receita,
-        totalComissoes: totalComissoesPagas, // Agora reflete apenas o pago
+        totalComissoes: totalComissoesPagas,
         despesas: despesas,
-        // Saldo = Receita - Despesas Gerais - Comissões Pagas
         saldoLiquido: receita - despesas - totalComissoesPagas,
         totalAlunos: total,
         alunosAtivos: ativos,
-        alunosInadimplentes: inadimplentes
+        alunosInadimplentes: inadimplentes,
+        // Novos totais
+        pagtoDinheiro: pDinheiro,
+        pagtoPix: pPix,
+        pagtoCredito: pCredito,
+        pagtoDebito: pDebito
       });
 
     } catch (error) {
@@ -91,7 +138,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (page: string) =
     }
   }
 
-  // Componente Card
+  // Componente Card Principal
   const Card = ({ title, value, icon: Icon, color, subtext }: any) => {
     const bgClass = color.includes('600') 
         ? color.replace('text-', 'bg-').replace('600', '100') 
@@ -99,28 +146,40 @@ export default function Dashboard({ onNavigate }: { onNavigate: (page: string) =
 
     return (
         <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex items-start justify-between relative overflow-hidden group hover:shadow-md transition-all">
-        <div className={`absolute -right-6 -top-6 opacity-5 p-4 rounded-full ${color.replace('text-', 'bg-')} transition-transform group-hover:scale-110`}>
-            <Icon size={100} />
-        </div>
-        <div>
-            <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-2">{title}</p>
-            <h3 className={`text-2xl sm:text-3xl font-bold ${color}`}>{value}</h3>
-            {subtext && <p className="text-xs text-slate-400 mt-1">{subtext}</p>}
-        </div>
-        <div className={`p-3 rounded-xl ${bgClass} ${color}`}>
-            <Icon size={24} />
-        </div>
+            <div className={`absolute -right-6 -top-6 opacity-5 p-4 rounded-full ${color.replace('text-', 'bg-')} transition-transform group-hover:scale-110`}>
+                <Icon size={100} />
+            </div>
+            <div>
+                <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-2">{title}</p>
+                <h3 className={`text-2xl sm:text-3xl font-bold ${color}`}>{value}</h3>
+                {subtext && <p className="text-xs text-slate-400 mt-1">{subtext}</p>}
+            </div>
+            <div className={`p-3 rounded-xl ${bgClass} ${color}`}>
+                <Icon size={24} />
+            </div>
         </div>
     );
   };
 
-  // Gráfico Pizza
+  // Componente Mini Card para Pagamentos
+  const MiniCardPagamento = ({ titulo, valor, icon: Icon, corBg, corTexto }: any) => (
+      <div className={`flex items-center gap-4 p-4 rounded-xl border ${corBg} border-opacity-50 shadow-sm`}>
+          <div className={`p-3 rounded-lg bg-white ${corTexto}`}>
+              <Icon size={20} />
+          </div>
+          <div>
+              <p className="text-xs font-bold uppercase text-slate-500">{titulo}</p>
+              <p className={`text-lg font-bold ${corTexto}`}>{valor}</p>
+          </div>
+      </div>
+  );
+
+  // Gráfico Pizza CSS
   const GraficoPizza = () => {
       const total = stats.receitaBruta || 1; 
       
       const pDespesas = (stats.despesas / total) * 100;
       const pComissoes = (stats.totalComissoes / total) * 100;
-      // Lucro é o que sobra
       const pLucro = ((stats.receitaBruta - stats.despesas - stats.totalComissoes) / total) * 100;
       const safeLucro = pLucro > 0 ? pLucro : 0;
       
@@ -183,6 +242,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (page: string) =
           </p>
       </div>
 
+      {/* 1. GRID SUPERIOR - CARDS FINANCEIROS PRINCIPAIS */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card title="Receita Bruta" value={`R$ ${stats.receitaBruta.toFixed(2)}`} icon={TrendingUp} color="text-green-600" subtext="Total recebido" />
         <Card title="Comissões Pagas" value={`R$ ${stats.totalComissoes.toFixed(2)}`} icon={HandCoins} color="text-orange-600" subtext="Repasse efetivado" />
@@ -190,6 +250,39 @@ export default function Dashboard({ onNavigate }: { onNavigate: (page: string) =
         <Card title="Saldo Líquido" value={`R$ ${stats.saldoLiquido.toFixed(2)}`} icon={Wallet} color={stats.saldoLiquido >= 0 ? "text-blue-600" : "text-red-600"} subtext="Lucro Real (Livre)" />
       </div>
 
+      {/* 2. NOVA SEÇÃO: DETALHAMENTO DE ENTRADAS */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <MiniCardPagamento 
+            titulo="Dinheiro (Caixa)" 
+            valor={`R$ ${stats.pagtoDinheiro.toFixed(2)}`} 
+            icon={Banknote} 
+            corBg="bg-green-50 border-green-100" 
+            corTexto="text-green-700" 
+          />
+          <MiniCardPagamento 
+            titulo="Pix" 
+            valor={`R$ ${stats.pagtoPix.toFixed(2)}`} 
+            icon={QrCode} 
+            corBg="bg-teal-50 border-teal-100" 
+            corTexto="text-teal-700" 
+          />
+          <MiniCardPagamento 
+            titulo="Cartão Crédito" 
+            valor={`R$ ${stats.pagtoCredito.toFixed(2)}`} 
+            icon={CreditCard} 
+            corBg="bg-blue-50 border-blue-100" 
+            corTexto="text-blue-700" 
+          />
+          <MiniCardPagamento 
+            titulo="Cartão Débito" 
+            valor={`R$ ${stats.pagtoDebito.toFixed(2)}`} 
+            icon={CreditCard} 
+            corBg="bg-indigo-50 border-indigo-100" 
+            corTexto="text-indigo-700" 
+          />
+      </div>
+
+      {/* 3. SEÇÃO INFERIOR - GRÁFICO E ALUNOS */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
               <h3 className="font-bold text-slate-800 mb-6">Distribuição Financeira</h3>
