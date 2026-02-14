@@ -8,7 +8,9 @@ import {
   Calendar, 
   Users, 
   X, 
-  XCircle // Ícone para cancelar
+  XCircle,
+  CheckCircle,
+  AlertTriangle
 } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -34,6 +36,15 @@ export default function Instrutores() {
   const [showForm, setShowForm] = useState(false);
   const [novaComissao, setNovaComissao] = useState({ instrutor_nome: '', categoria: 'Infantil', percentual: '', telefone: '' });
 
+  // --- ESTADO PARA O ALERTA PERSONALIZADO ---
+  const [customAlert, setCustomAlert] = useState({ 
+    show: false, 
+    title: '', 
+    message: '', 
+    onConfirm: () => {}, 
+    type: 'danger' as 'danger' | 'success' 
+  });
+
   useEffect(() => { fetchDados(); }, [mesSelecionado]);
 
   async function fetchDados() {
@@ -42,7 +53,6 @@ export default function Instrutores() {
       
       const { data: dataInstrutores } = await supabase.from('comissoes_config').select('*');
       
-      // Busca pagamentos
       const { data: dataPagamentos } = await supabase
         .from('pagamentos_instrutores')
         .select('instrutor_id')
@@ -81,10 +91,9 @@ export default function Instrutores() {
     return { totalArrecadadoTurma, valorComissao, qtdAlunosPagantes };
   }
 
-  // --- AÇÕES ---
+  // --- AÇÕES ORIGINAIS (SEM O CONFIRM DO GOOGLE) ---
 
   async function handleMarcarComoPago(instrutor: Instrutor, valor: number) {
-    if (!confirm(`Confirmar pagamento de R$ ${valor.toFixed(2)} para ${instrutor.instrutor_nome}?`)) return;
     try {
         const { error } = await supabase.from('pagamentos_instrutores').insert([{
             instrutor_id: instrutor.id,
@@ -92,14 +101,12 @@ export default function Instrutores() {
             valor_pago: valor
         }]);
         if (error) throw error;
-        addToast('Pagamento registrado e computado no Dashboard!', 'success');
+        addToast('Pagamento registrado!', 'success');
         fetchDados();
     } catch { addToast('Erro ao registrar.', 'error'); }
   }
 
-  // NOVA FUNÇÃO DE CANCELAR
   async function handleCancelarPagamento(instrutor: Instrutor) {
-    if (!confirm(`Cancelar o registro de pagamento de ${instrutor.instrutor_nome}? Isso removerá o valor do Dashboard.`)) return;
     try {
         const { error } = await supabase
             .from('pagamentos_instrutores')
@@ -110,9 +117,13 @@ export default function Instrutores() {
         if (error) throw error;
         addToast('Pagamento cancelado.', 'info');
         fetchDados();
-    } catch { 
-        addToast('Erro ao cancelar.', 'error'); 
-    }
+    } catch { addToast('Erro ao cancelar.', 'error'); }
+  }
+
+  async function handleDelete(id: string) { 
+    await supabase.from('comissoes_config').delete().eq('id', id); 
+    addToast('Instrutor removido.', 'success');
+    fetchDados(); 
   }
 
   function enviarRelatorio(instrutor: Instrutor) {
@@ -134,8 +145,6 @@ export default function Instrutores() {
       addToast('Salvo!', 'success'); setShowForm(false); setNovaComissao({ instrutor_nome: '', categoria: 'Infantil', percentual: '', telefone: '' }); fetchDados();
     } catch { addToast('Erro.', 'error'); }
   }
-
-  async function handleDelete(id: string) { if(confirm('Remover instrutor?')) await supabase.from('comissoes_config').delete().eq('id', id); fetchDados(); }
 
   return (
     <div className="space-y-6 animate-fadeIn pb-20">
@@ -161,7 +170,6 @@ export default function Instrutores() {
                 return (
                     <div key={inst.id} className={`bg-white rounded-xl shadow-sm border p-5 flex flex-col relative overflow-hidden transition-all ${inst.pago_neste_mes ? 'border-green-200 shadow-green-50' : 'border-slate-200'}`}>
                         
-                        {/* ETIQUETA PAGO NA ESQUERDA */}
                         {inst.pago_neste_mes && (
                              <div className="absolute top-0 left-0 bg-green-500 text-white text-[10px] font-bold px-3 py-1 rounded-br-lg z-10 shadow-sm flex items-center gap-1">
                                 <Wallet size={10} /> PAGO
@@ -176,7 +184,19 @@ export default function Instrutores() {
                                     Turma {inst.categoria} • {inst.percentual}%
                                 </p>
                             </div>
-                            <button onClick={() => handleDelete(inst.id)} className="text-red-500 hover:text-red-500 hover:bg-red-50 p-2 rounded-lg transition-colors" title="Excluir Instrutor"><Trash2 size={18}/></button>
+                            <button 
+                                onClick={() => setCustomAlert({
+                                    show: true,
+                                    title: 'Remover Instrutor?',
+                                    message: `Deseja apagar permanentemente o cadastro do instrutor "${inst.instrutor_nome}"?`,
+                                    type: 'danger',
+                                    onConfirm: () => handleDelete(inst.id)
+                                })} 
+                                className="text-red-500 hover:text-red-700 hover:bg-red-50 p-2 rounded-lg transition-colors" 
+                                title="Excluir Instrutor"
+                            >
+                                <Trash2 size={18}/>
+                            </button>
                         </div>
 
                         <div className="flex-1 space-y-3 mb-5">
@@ -193,11 +213,32 @@ export default function Instrutores() {
                         <div className="grid grid-cols-2 gap-2 mt-auto">
                             <button onClick={() => enviarRelatorio(inst)} className="bg-white border border-green-200 text-green-700 hover:bg-green-50 py-2.5 rounded-lg font-bold text-xs flex items-center justify-center gap-1 transition-colors"><MessageCircle size={16}/> WhatsApp</button>
                             
-                            {/* BOTÃO ALTERNÁVEL (PAGAR / CANCELAR) */}
                             {inst.pago_neste_mes ? (
-                                <button onClick={() => handleCancelarPagamento(inst)} className="bg-red-50 border border-red-100 text-red-600 hover:bg-red-100 py-2.5 rounded-lg font-bold text-xs flex items-center justify-center gap-1 transition-colors"><XCircle size={16}/> Cancelar</button>
+                                <button 
+                                    onClick={() => setCustomAlert({
+                                        show: true,
+                                        title: 'Cancelar Pagamento?',
+                                        message: `Deseja desmarcar o pagamento de ${inst.instrutor_nome}? O valor voltará a constar como pendente no dashboard.`,
+                                        type: 'danger',
+                                        onConfirm: () => handleCancelarPagamento(inst)
+                                    })} 
+                                    className="bg-red-50 border border-red-100 text-red-600 hover:bg-red-100 py-2.5 rounded-lg font-bold text-xs flex items-center justify-center gap-1 transition-colors"
+                                >
+                                    <XCircle size={16}/> Cancelar
+                                </button>
                             ) : (
-                                <button onClick={() => handleMarcarComoPago(inst, valorComissao)} className="bg-slate-900 text-white hover:bg-slate-700 py-2.5 rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition-colors shadow-sm"><Wallet size={16}/> Pagar</button>
+                                <button 
+                                    onClick={() => setCustomAlert({
+                                        show: true,
+                                        title: 'Confirmar Pagamento',
+                                        message: `Deseja registrar que o valor de R$ ${valorComissao.toFixed(2)} foi pago ao instrutor ${inst.instrutor_nome}?`,
+                                        type: 'success',
+                                        onConfirm: () => handleMarcarComoPago(inst, valorComissao)
+                                    })} 
+                                    className="bg-slate-900 text-white hover:bg-slate-700 py-2.5 rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition-colors shadow-sm"
+                                >
+                                    <Wallet size={16}/> Pagar
+                                </button>
                             )}
                         </div>
                     </div>
@@ -213,11 +254,39 @@ export default function Instrutores() {
                 <form onSubmit={handleSave} className="space-y-3">
                     <div><label className="text-xs font-bold text-slate-500 uppercase">Nome</label><input className="w-full p-3 border rounded-lg bg-slate-50" required value={novaComissao.instrutor_nome} onChange={e=>setNovaComissao({...novaComissao, instrutor_nome: e.target.value})} placeholder="Nome" /></div>
                     <div><label className="text-xs font-bold text-slate-500 uppercase">WhatsApp</label><input className="w-full p-3 border rounded-lg bg-slate-50" required value={novaComissao.telefone} onChange={e=>setNovaComissao({...novaComissao, telefone: e.target.value})} placeholder="Com DDD" /></div>
-                    <div><label className="text-xs font-bold text-slate-500 uppercase">Turma</label><select className="w-full p-3 border rounded-lg bg-slate-50" value={novaComissao.categoria} onChange={e=>setNovaComissao({...novaComissao, categoria: e.target.value})}><option value="Adulto">Adulto</option><option value="Infantil">Infantil</option><option value="Kids">Kids</option></select></div>
+                    <div><label className="text-xs font-bold text-slate-500 uppercase">Turma</label><select className="w-full p-3 border rounded-lg bg-slate-50" value={novaComissao.categoria} onChange={e=>setNovaComissao({...novaComissao, categoria: e.target.value})}>
+                        <option value="Adulto">Adulto</option><option value="Infantil">Infantil</option><option value="Kids">Kids</option></select></div>
                     <div><label className="text-xs font-bold text-slate-500 uppercase">Comissão %</label><input className="w-full p-3 border rounded-lg bg-slate-50" required type="number" placeholder="Ex: 50" value={novaComissao.percentual} onChange={e=>setNovaComissao({...novaComissao, percentual: e.target.value})} /></div>
                     <button className="w-full bg-slate-900 text-white py-3 rounded-xl font-bold mt-2 shadow-lg hover:bg-slate-800">Salvar Cadastro</button>
                 </form>
             </div>
+        </div>
+      )}
+
+      {/* MODAL DE ALERTA PERSONALIZADO */}
+      {customAlert.show && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[999] animate-fadeIn">
+          <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-sm shadow-2xl text-center border border-white">
+            <div className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 ${customAlert.type === 'danger' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
+              {customAlert.type === 'danger' ? <AlertTriangle size={40} /> : <CheckCircle size={40} />}
+            </div>
+            <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter italic mb-2">{customAlert.title}</h3>
+            <p className="text-slate-500 mb-8 leading-relaxed font-medium">{customAlert.message}</p>
+            <div className="flex flex-col gap-3">
+              <button 
+                onClick={() => { customAlert.onConfirm(); setCustomAlert({ ...customAlert, show: false }); }}
+                className={`w-full py-4 rounded-[1.5rem] font-black uppercase tracking-widest shadow-xl transition-all ${customAlert.type === 'danger' ? 'bg-red-600 text-white shadow-red-200 hover:bg-red-700' : 'bg-green-600 text-white shadow-green-200 hover:bg-green-700'}`}
+              >
+                Confirmar
+              </button>
+              <button 
+                onClick={() => setCustomAlert({ ...customAlert, show: false })}
+                className="w-full py-4 bg-slate-100 text-slate-500 rounded-[1.5rem] font-bold uppercase text-xs tracking-widest hover:bg-slate-200"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

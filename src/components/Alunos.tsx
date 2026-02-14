@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { 
   Plus, Search, Edit, Trash2, User, CheckCircle, 
   Award, Brain, DollarSign, X, 
-  HeartPulse, Cake, Phone, Calendar, Hash, Droplets, Info, ChevronLeft
+  HeartPulse, Cake, Phone, Calendar, ChevronLeft, Trophy, Medal, ClipboardList, Info, Upload, Droplet, Zap
 } from 'lucide-react';
 import { startOfMonth, endOfMonth, format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -27,6 +27,7 @@ interface Aluno {
   plano_dias: string[];
   bolsista_jiujitsu: boolean;
   bolsista_musculacao: boolean;
+  atleta: boolean;
   pago_mes_atual?: boolean;
 }
 
@@ -37,25 +38,37 @@ export default function Alunos() {
   
   const [alunos, setAlunos] = useState<Aluno[]>([]);
   const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
   const [tabAtual, setTabAtual] = useState<'Adulto' | 'Infantil' | 'Kids'>('Adulto');
   const [viewState, setViewState] = useState<'list' | 'form' | 'details'>('list');
   const [searchTerm, setSearchTerm] = useState('');
-  const [formData, setFormData] = useState<Partial<Aluno>>({});
+  const [formData, setFormData] = useState<Partial<Aluno>>({ plano_dias: [] });
   const [selectedAluno, setSelectedAluno] = useState<Aluno | null>(null);
   const [editMode, setEditMode] = useState(false);
 
+  const [customAlert, setCustomAlert] = useState({ show: false, id: '', nome: '' });
   const [pagamentoModal, setPagamentoModal] = useState<{ show: boolean, aluno: Aluno | null, valorTotal: number }>({ show: false, aluno: null, valorTotal: 0 });
   const [pagamentosParciais, setPagamentosParciais] = useState<{ metodo: string, valor: number }[]>([]);
 
   useEffect(() => { fetchAlunos(); }, []);
 
+  // --- CORREÇÃO JACKSON: FILTRANDO APENAS POR MENSALIDADE ---
   async function fetchAlunos() {
     setLoading(true);
     try {
       const { data: dadosAlunos } = await supabase.from('alunos').select('*').order('nome');
       const inicioMes = startOfMonth(new Date()).toISOString();
       const fimMes = endOfMonth(new Date()).toISOString();
-      const { data: pagamentos } = await supabase.from('transacoes').select('aluno_id').eq('tipo', 'Receita').gte('data', inicioMes).lte('data', fimMes);
+
+      // Buscamos transações apenas do tipo 'Receita' e categoria 'Mensalidade'
+      const { data: pagamentos } = await supabase
+        .from('transacoes')
+        .select('aluno_id')
+        .eq('tipo', 'Receita')
+        .eq('categoria', 'Mensalidade') // ISSO IMPEDE QUE VENDAS DA LOJA COMPUTEM COMO MENSALIDADE
+        .gte('data', inicioMes)
+        .lte('data', fimMes);
+
       const pagantesSet = new Set(pagamentos?.map(p => p.aluno_id));
       
       const alunosProc = dadosAlunos?.map((aluno: any) => ({
@@ -63,7 +76,39 @@ export default function Alunos() {
         pago_mes_atual: pagantesSet.has(aluno.id) || aluno.bolsista_jiujitsu || aluno.bolsista_musculacao
       }));
       setAlunos(alunosProc || []);
+      
+      // Atualiza o aluno selecionado se estiver na tela de detalhes
+      if (selectedAluno) {
+        const atualizado = alunosProc?.find(a => a.id === selectedAluno.id);
+        if (atualizado) setSelectedAluno(atualizado);
+      }
     } catch(e) { console.error(e) } finally { setLoading(false) }
+  }
+
+  function adicionarMetodo() {
+     const novoTamanho = pagamentosParciais.length + 1;
+     const valorIgual = Number((pagamentoModal.valorTotal / novoTamanho).toFixed(2));
+     const novos = Array(novoTamanho).fill(null).map((_, i) => ({
+         metodo: pagamentosParciais[i]?.metodo || 'Pix',
+         valor: valorIgual
+     }));
+     setPagamentosParciais(novos);
+  }
+
+  async function handleFotoUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    if (!e.target.files || e.target.files.length === 0) return;
+    try {
+      setUploading(true);
+      const file = e.target.files[0];
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${Math.random()}.${fileExt}`;
+      const filePath = `perfil/${fileName}`;
+      const { error: uploadError } = await supabase.storage.from('alunos_fotos').upload(filePath, file);
+      if (uploadError) throw uploadError;
+      const { data } = supabase.storage.from('alunos_fotos').getPublicUrl(filePath);
+      setFormData({ ...formData, foto_url: data.publicUrl });
+      addToast('Foto carregada!', 'success');
+    } catch (error) { addToast('Erro no upload.', 'error'); } finally { setUploading(false); }
   }
 
   function isAniversariante(dataNasc: string) {
@@ -73,7 +118,6 @@ export default function Alunos() {
       return hoje.getDate() === dia && hoje.getMonth() === (mes - 1);
   }
 
-  // --- PAGAMENTO ---
   function abrirModalPagamento(aluno: Aluno) {
     let valor = 80.00;
     if (aluno.plano_tipo === '3 Dias') valor = 70.00;
@@ -85,9 +129,12 @@ export default function Alunos() {
   async function confirmarPagamento() {
     if (!pagamentoModal.aluno) return;
     const soma = pagamentosParciais.reduce((acc, p) => acc + p.valor, 0);
-    if (Math.abs(soma - pagamentoModal.valorTotal) > 0.1) { addToast(`Soma incorreta. Total: R$ ${pagamentoModal.valorTotal}`, 'warning'); return; }
+    if (Math.abs(soma - pagamentoModal.valorTotal) > 0.5) { 
+        addToast(`A soma deve ser R$ ${pagamentoModal.valorTotal}`, 'warning'); 
+        return; 
+    }
     try {
-      const { error } = await supabase.from('transacoes').insert([{
+      await supabase.from('transacoes').insert([{
         descricao: `Mensalidade - ${pagamentoModal.aluno.nome}`,
         valor: pagamentoModal.valorTotal,
         tipo: 'Receita',
@@ -96,17 +143,12 @@ export default function Alunos() {
         aluno_id: pagamentoModal.aluno.id,
         detalhes_pagamento: { metodos: pagamentosParciais }
       }]);
-      if (error) throw error;
       addToast(`Pagamento confirmado!`, 'success'); 
       setPagamentoModal({ show: false, aluno: null, valorTotal: 0 }); 
       fetchAlunos();
-      if (selectedAluno?.id === pagamentoModal.aluno.id) {
-          setSelectedAluno({...selectedAluno, pago_mes_atual: true});
-      }
     } catch (error) { addToast('Erro ao registrar.', 'error'); }
   }
 
-  // --- CRUD ---
   async function handleSubmit(e: React.FormEvent) {
       e.preventDefault();
       try {
@@ -114,176 +156,165 @@ export default function Alunos() {
         delete (alunoData as any).pago_mes_atual; 
         if (editMode && formData.id) await supabase.from('alunos').update(alunoData).eq('id', formData.id);
         else await supabase.from('alunos').insert([alunoData]);
-        addToast('Salvo com sucesso!', 'success'); setViewState('list'); fetchAlunos();
+        addToast('Salvo!', 'success'); setViewState('list'); fetchAlunos();
       } catch (e:any) { addToast(e.message, 'error') }
   }
 
-  async function handleDelete(id: string) { 
-    if (!confirm('Deseja excluir este aluno permanentemente?')) return;
-    await supabase.from('alunos').delete().eq('id', id); 
-    addToast('Excluído.', 'success'); 
-    setViewState('list');
-    fetchAlunos(); 
+  async function executarExclusao() {
+    await supabase.from('alunos').delete().eq('id', customAlert.id);
+    addToast('Excluído.', 'success'); setCustomAlert({ show: false, id: '', nome: '' }); fetchAlunos();
   }
+
+  const toggleDia = (dia: string) => {
+    const diasAtuais = formData.plano_dias || [];
+    if (diasAtuais.includes(dia)) setFormData({ ...formData, plano_dias: diasAtuais.filter(d => d !== dia) });
+    else setFormData({ ...formData, plano_dias: [...diasAtuais, dia] });
+  };
 
   const filteredAlunos = alunos.filter(aluno => 
     (aluno.categoria === tabAtual || (!aluno.categoria && tabAtual === 'Adulto')) &&
     aluno.nome.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  // --- VIEW: DETALHES DO ALUNO (NOVO UX) ---
+  // --- VIEW: DETALHES (FICHA DO ALUNO REDESIGN) ---
   if (viewState === 'details' && selectedAluno) {
-    const aluno = selectedAluno;
+    const a = selectedAluno;
     return (
         <div className="animate-fadeIn pb-10">
-            {/* Header de Navegação */}
-            <button 
-                onClick={() => setViewState('list')}
-                className="flex items-center gap-2 text-slate-500 hover:text-slate-800 transition-colors mb-6 font-medium"
-            >
-                <ChevronLeft size={20}/> Voltar para lista
-            </button>
+            <div className="flex items-center justify-between mb-6">
+                <button onClick={() => setViewState('list')} className="flex items-center gap-2 text-slate-500 hover:text-slate-800 font-bold transition-all">
+                    <ChevronLeft size={24}/> Voltar para Lista
+                </button>
+                <div className="flex gap-2">
+                    <button onClick={() => { setFormData(a); setEditMode(true); setViewState('form'); }} className="p-3 bg-white border border-slate-200 rounded-2xl text-slate-600 hover:bg-slate-50 shadow-sm transition-all"><Edit size={20}/></button>
+                    <button onClick={() => setCustomAlert({ show: true, id: a.id, nome: a.nome })} className="p-3 bg-white border border-red-100 rounded-2xl text-red-500 hover:bg-red-50 shadow-sm transition-all"><Trash2 size={20}/></button>
+                </div>
+            </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Cartão de Perfil Principal */}
-                <div className="lg:col-span-1 space-y-6">
-                    <div className="bg-white rounded-3xl p-8 shadow-sm border border-slate-100 flex flex-col items-center text-center relative overflow-hidden">
-                        {/* Faixa de Status */}
-                        <div className={`absolute top-0 inset-x-0 h-2 ${aluno.status === 'Ativo' ? 'bg-green-500' : 'bg-slate-300'}`}></div>
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                {/* Lateral Esquerda: Perfil Rápido */}
+                <div className="lg:col-span-4 space-y-6">
+                    <div className="bg-white rounded-[2.5rem] p-8 shadow-xl shadow-slate-200/50 border border-white flex flex-col items-center text-center relative overflow-hidden">
+                        <div className={`absolute top-0 inset-x-0 h-3 ${a.status === 'Ativo' ? 'bg-green-500' : 'bg-slate-300'}`}></div>
                         
-                        <div className="w-32 h-32 rounded-full bg-slate-100 flex items-center justify-center mb-4 border-4 border-white shadow-md relative">
-                            {aluno.neurodivergente ? (
-                                <div className="absolute -top-1 -right-1 bg-purple-600 text-white p-2 rounded-full shadow-lg border-2 border-white">
+                        <div className="w-40 h-40 rounded-[3rem] bg-slate-100 flex items-center justify-center mb-6 border-4 border-white shadow-2xl overflow-hidden relative">
+                            {a.foto_url ? <img src={a.foto_url} className="w-full h-full object-cover" /> : <User size={80} className="text-slate-300"/>}
+                            {a.neurodivergente && (
+                                <div className="absolute bottom-2 right-2 bg-purple-600 text-white p-2 rounded-2xl border-2 border-white shadow-lg">
                                     <Brain size={20}/>
                                 </div>
-                            ) : null}
-                            <User size={60} className="text-slate-300"/>
-                        </div>
-
-                        <h2 className="text-2xl font-bold text-slate-800 mb-1">{aluno.nome}</h2>
-                        <p className="text-slate-500 font-medium mb-4">{aluno.graduacao} • {aluno.categoria}</p>
-
-                        <div className="flex flex-wrap justify-center gap-2 mb-6">
-                            {aluno.pago_mes_atual ? (
-                                <span className="bg-green-100 text-green-700 px-4 py-1.5 rounded-full text-xs font-bold border border-green-200 flex items-center gap-1">
-                                    <CheckCircle size={14}/> {aluno.bolsista_jiujitsu || aluno.bolsista_musculacao ? 'Isento' : 'Mensalidade em Dia'}
-                                </span>
-                            ) : (
-                                <span className="bg-red-100 text-red-700 px-4 py-1.5 rounded-full text-xs font-bold border border-red-200 flex items-center gap-1">
-                                    <X size={14}/> Pagamento Pendente
-                                </span>
-                            )}
-                            {isAniversariante(aluno.data_nascimento) && (
-                                <span className="bg-pink-100 text-pink-700 px-4 py-1.5 rounded-full text-xs font-bold border border-pink-200 animate-bounce flex items-center gap-1">
-                                    <Cake size={14}/> Aniversariante!
-                                </span>
                             )}
                         </div>
 
-                        <div className="w-full grid grid-cols-2 gap-3">
-                            <button 
-                                onClick={() => { setFormData(aluno); setEditMode(true); setViewState('form'); }}
-                                className="flex items-center justify-center gap-2 bg-slate-900 text-white py-3 rounded-2xl font-bold hover:bg-slate-800 transition-all text-sm"
-                            >
-                                <Edit size={16}/> Editar
-                            </button>
-                            {!aluno.pago_mes_atual && (
-                                <button 
-                                    onClick={() => abrirModalPagamento(aluno)}
-                                    className="flex items-center justify-center gap-2 bg-green-600 text-white py-3 rounded-2xl font-bold hover:bg-green-700 transition-all text-sm shadow-md shadow-green-100"
-                                >
-                                    <DollarSign size={16}/> Pagar
-                                </button>
-                            )}
+                        <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tighter leading-tight mb-1">{a.nome}</h2>
+                        <div className="flex items-center gap-2 mb-6">
+                            <span className="bg-slate-900 text-white text-[10px] font-black px-3 py-1 rounded-full uppercase">{a.graduacao}</span>
+                            <span className="bg-blue-100 text-blue-700 text-[10px] font-black px-3 py-1 rounded-full uppercase">{a.categoria}</span>
+                        </div>
+
+                        {/* Status Financeiro com Botão de Pagar */}
+                        <div className="w-full p-4 rounded-3xl border border-slate-100 bg-slate-50 mb-4 text-left">
+                            <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Situação Financeira</p>
+                            <div className="flex items-center justify-between">
+                                {a.pago_mes_atual ? (
+                                    <div className="flex items-center gap-2 text-green-600 font-black uppercase text-sm">
+                                        <CheckCircle size={20}/> Mensalidade em Dia
+                                    </div>
+                                ) : (
+                                    <>
+                                        <div className="flex items-center gap-2 text-red-500 font-black uppercase text-sm">
+                                            <X size={20}/> Pagamento Pendente
+                                        </div>
+                                        <button 
+                                            onClick={() => abrirModalPagamento(a)}
+                                            className="bg-green-500 text-white p-3 rounded-2xl shadow-lg shadow-green-200 hover:scale-110 transition-all"
+                                        >
+                                            <DollarSign size={20}/>
+                                        </button>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="w-full grid grid-cols-2 gap-2">
+                             {a.atleta && <div className="bg-blue-50 text-blue-600 p-3 rounded-2xl text-[10px] font-black uppercase flex items-center justify-center gap-2 border border-blue-100"><Trophy size={14}/> Competidor</div>}
+                             {(a.bolsista_jiujitsu || a.bolsista_musculacao) && <div className="bg-yellow-50 text-yellow-700 p-3 rounded-2xl text-[10px] font-black uppercase flex items-center justify-center gap-2 border border-yellow-100"><Medal size={14}/> Bolsista</div>}
                         </div>
                     </div>
 
-                    {/* Cartão de Contato Rápido */}
-                    <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
-                        <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
-                            <Phone size={18} className="text-blue-500"/> Contato
-                        </h3>
-                        <div className="space-y-4">
-                            <div className="flex items-center justify-between">
-                                <span className="text-sm text-slate-400">WhatsApp</span>
-                                <span className="font-bold text-slate-700">{aluno.whatsapp || 'Não informado'}</span>
-                            </div>
+                    <div className="bg-white rounded-[2.5rem] p-6 shadow-lg border border-white flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                            <div className="p-3 bg-blue-50 text-blue-600 rounded-2xl"><Phone size={20}/></div>
+                            <div><p className="text-[10px] font-black text-slate-400 uppercase">WhatsApp</p><p className="font-bold text-slate-800">{a.whatsapp || 'Não cadastrado'}</p></div>
                         </div>
                     </div>
                 </div>
 
-                {/* Coluna Central e Direita - Dados Detalhados */}
-                <div className="lg:col-span-2 space-y-6">
-                    {/* Grade de Info */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        {/* Plano e BJJ */}
-                        <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
-                            <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
-                                <Award size={18} className="text-yellow-500"/> Informações Técnicas
-                            </h3>
+                {/* Área Principal: Informações Detalhadas */}
+                <div className="lg:col-span-8 space-y-6">
+                    {/* Bloco 1: Treino e Plano */}
+                    <div className="bg-white rounded-[2.5rem] p-8 shadow-xl border border-white">
+                        <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight mb-6 flex items-center gap-2">
+                            <Zap size={22} className="text-yellow-500"/> Detalhes do Plano
+                        </h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                             <div className="space-y-4">
                                 <div className="flex justify-between border-b border-slate-50 pb-2">
-                                    <span className="text-sm text-slate-400">Plano</span>
-                                    <span className="font-bold text-slate-700">{aluno.plano_tipo}</span>
+                                    <span className="text-slate-400 font-bold uppercase text-xs">Tipo de Plano</span>
+                                    <span className="font-black text-slate-800 italic">{a.plano_tipo}</span>
                                 </div>
                                 <div className="flex justify-between border-b border-slate-50 pb-2">
-                                    <span className="text-sm text-slate-400">Dias de Treino</span>
-                                    <span className="font-bold text-slate-700">{aluno.plano_dias?.join(', ') || 'Todos'}</span>
-                                </div>
-                                <div className="flex justify-between border-b border-slate-50 pb-2">
-                                    <span className="text-sm text-slate-400">Bolsista Jiu-Jitsu</span>
-                                    <span className={`font-bold ${aluno.bolsista_jiujitsu ? 'text-green-600' : 'text-slate-300'}`}>{aluno.bolsista_jiujitsu ? 'Sim' : 'Não'}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span className="text-sm text-slate-400">Bolsista Musculação</span>
-                                    <span className={`font-bold ${aluno.bolsista_musculacao ? 'text-green-600' : 'text-slate-300'}`}>{aluno.bolsista_musculacao ? 'Sim' : 'Não'}</span>
+                                    <span className="text-slate-400 font-bold uppercase text-xs">Dias de Treino</span>
+                                    <span className="font-black text-blue-600 text-xs uppercase">{a.plano_dias?.join(' • ') || 'A Definir'}</span>
                                 </div>
                             </div>
-                        </div>
-
-                        {/* Saúde e Cuidados */}
-                        <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
-                            <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
-                                <HeartPulse size={18} className="text-red-500"/> Saúde e Segurança
-                            </h3>
                             <div className="space-y-4">
                                 <div className="flex justify-between border-b border-slate-50 pb-2">
-                                    <span className="text-sm text-slate-400">Tipo Sanguíneo</span>
-                                    <span className="font-bold text-red-600">{aluno.tipo_sanguineo || '-'}</span>
+                                    <span className="text-slate-400 font-bold uppercase text-xs">Jiu-Jitsu Bolsista</span>
+                                    <span className={`font-black uppercase text-xs ${a.bolsista_jiujitsu ? 'text-green-600' : 'text-slate-300'}`}>{a.bolsista_jiujitsu ? 'Ativo' : 'Não'}</span>
                                 </div>
                                 <div className="flex justify-between border-b border-slate-50 pb-2">
-                                    <span className="text-sm text-slate-400">Data Nasc.</span>
-                                    <span className="font-bold text-slate-700">
-                                        {aluno.data_nascimento ? format(new Date(aluno.data_nascimento), "dd/MM/yyyy") : '-'}
-                                    </span>
+                                    <span className="text-slate-400 font-bold uppercase text-xs">Musculação Bolsista</span>
+                                    <span className={`font-black uppercase text-xs ${a.bolsista_musculacao ? 'text-green-600' : 'text-slate-300'}`}>{a.bolsista_musculacao ? 'Ativo' : 'Não'}</span>
                                 </div>
-                                {aluno.neurodivergente && (
-                                    <div className="bg-purple-50 p-3 rounded-2xl border border-purple-100">
-                                        <p className="text-[10px] font-bold text-purple-400 uppercase">Neurodivergência</p>
-                                        <p className="font-bold text-purple-700">{aluno.neurodivergencia_tipo || 'Sim'}</p>
-                                    </div>
-                                )}
                             </div>
                         </div>
                     </div>
 
-                    {/* Observações de Texto */}
-                    <div className="bg-white rounded-3xl p-8 shadow-sm border border-slate-100">
-                        <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2">
-                            <Info size={18} className="text-blue-500"/> Observações e Alergias
+                    {/* Bloco 2: Saúde (Muito Importante) */}
+                    <div className="bg-white rounded-[2.5rem] p-8 shadow-xl border border-white bg-gradient-to-br from-white to-red-50/20">
+                        <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight mb-6 flex items-center gap-2">
+                            <HeartPulse size={22} className="text-red-500"/> Saúde e Condições
                         </h3>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                            <div>
-                                <h4 className="text-xs font-bold text-slate-400 uppercase mb-2">Alergias e Remédios</h4>
-                                <p className="text-slate-700 leading-relaxed bg-slate-50 p-4 rounded-2xl border border-slate-100 min-h-[100px]">
-                                    {aluno.alergias || 'Nenhuma registrada.'}
-                                </p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+                            <div className="space-y-6">
+                                <div className="flex items-center gap-4">
+                                    <div className="p-4 bg-red-100 text-red-600 rounded-3xl"><Droplet size={24}/></div>
+                                    <div>
+                                        <p className="text-[10px] font-black text-slate-400 uppercase">Tipo Sanguíneo</p>
+                                        <p className="text-2xl font-black text-red-600 italic">{a.tipo_sanguineo || 'N/A'}</p>
+                                    </div>
+                                </div>
+                                {a.neurodivergente && (
+                                    <div className="p-5 bg-purple-50 border border-purple-100 rounded-[2rem]">
+                                        <div className="flex items-center gap-2 text-purple-700 font-black uppercase text-[10px] mb-1"><Brain size={16}/> Neurodivergência</div>
+                                        <p className="font-bold text-purple-900">{a.neurodivergencia_tipo || 'Especificado'}</p>
+                                    </div>
+                                )}
                             </div>
-                            <div>
-                                <h4 className="text-xs font-bold text-slate-400 uppercase mb-2">Cuidados Especiais</h4>
-                                <p className="text-slate-700 leading-relaxed bg-slate-50 p-4 rounded-2xl border border-slate-100 min-h-[100px]">
-                                    {aluno.detalhes_condicao || 'Nenhum detalhe adicional.'}
-                                </p>
+                            <div className="space-y-6">
+                                <div>
+                                    <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Alergias e Remédios</p>
+                                    <div className="bg-white p-4 rounded-3xl border border-red-100 text-sm text-slate-600 italic shadow-inner">
+                                        {a.alergias || 'Nenhuma alergia ou remédio registrado.'}
+                                    </div>
+                                </div>
+                                <div>
+                                    <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Observações Especiais</p>
+                                    <div className="bg-white p-4 rounded-3xl border border-slate-100 text-sm text-slate-600 shadow-inner">
+                                        {a.detalhes_condicao || 'Sem observações adicionais.'}
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -293,196 +324,202 @@ export default function Alunos() {
     );
   }
 
-  // --- VIEW: FORMULÁRIO (MANTIDO) ---
+  // --- VIEW: FORMULÁRIO ---
   if (viewState === 'form') {
       return (
-          <div className="bg-white p-6 rounded-xl animate-fadeIn shadow-sm max-w-5xl mx-auto">
-              <h2 className="text-2xl font-bold mb-6 text-slate-800">{editMode ? 'Editar Aluno' : 'Novo Aluno'}</h2>
-              <form onSubmit={handleSubmit} className="space-y-8">
-                 <div className="space-y-4">
-                    <h3 className="text-lg font-bold text-blue-600 border-b pb-2 flex items-center gap-2"><User size={20}/> Dados Pessoais</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="col-span-1 md:col-span-2">
-                            <label className="block text-sm font-medium text-slate-700 mb-1">Nome Completo</label>
-                            <input className="border p-2 w-full rounded-lg" required value={formData.nome || ''} onChange={e=>setFormData({...formData, nome: e.target.value})} />
-                        </div>
-                        <div><label className="block text-sm font-medium text-slate-700 mb-1">Data Nascimento</label><input type="date" className="border p-2 w-full rounded-lg" value={formData.data_nascimento || ''} onChange={e=>setFormData({...formData, data_nascimento: e.target.value})} /></div>
-                        <div><label className="block text-sm font-medium text-slate-700 mb-1">WhatsApp</label><input className="border p-2 w-full rounded-lg" value={formData.whatsapp || ''} onChange={e=>setFormData({...formData, whatsapp: e.target.value})} /></div>
-                        <div><label className="block text-sm font-medium text-slate-700 mb-1">Turma</label><select className="border p-2 w-full rounded-lg bg-blue-50" value={formData.categoria} onChange={e=>setFormData({...formData, categoria: e.target.value as any})}><option value="Adulto">Adulto</option><option value="Infantil">Infantil</option><option value="Kids">Kids</option></select></div>
-                        <div><label className="block text-sm font-medium text-slate-700 mb-1">Graduação</label><select className="border p-2 w-full rounded-lg" value={formData.graduacao} onChange={e=>setFormData({...formData, graduacao: e.target.value})}><option value="">Selecione...</option><option>Branca</option><option>Cinza</option><option>Amarela</option><option>Laranja</option><option>Verde</option><option>Azul</option><option>Roxa</option><option>Marrom</option><option>Preta</option></select></div>
-                    </div>
-                 </div>
+          <div className="bg-slate-50 min-h-screen p-2 md:p-6 animate-fadeIn">
+              <div className="max-w-4xl mx-auto">
+                  <div className="flex items-center justify-between mb-8 italic uppercase font-black text-slate-800">
+                      <button onClick={() => setViewState('list')} className="p-2 hover:bg-white rounded-full transition-colors"><ChevronLeft size={28}/></button>
+                      <h2 className="text-2xl">{editMode ? 'Editar Perfil' : 'Novo Aluno'}</h2>
+                      <div className="w-10"></div>
+                  </div>
 
-                 <div className="space-y-4">
-                    <h3 className="text-lg font-bold text-red-500 border-b pb-2 flex items-center gap-2"><HeartPulse size={20}/> Saúde e Cuidados</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div className="space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 mb-1">Tipo Sanguíneo</label>
-                                <select className="border p-2 w-full rounded-lg" value={formData.tipo_sanguineo || ''} onChange={e=>setFormData({...formData, tipo_sanguineo: e.target.value})}>
-                                    <option value="">Não informado</option><option value="A+">A+</option><option value="A-">A-</option><option value="B+">B+</option><option value="B-">B-</option><option value="AB+">AB+</option><option value="AB-">AB-</option><option value="O+">O+</option><option value="O-">O-</option>
-                                </select>
-                            </div>
-                            <div className="p-4 border rounded-lg bg-slate-50">
-                                <label className="flex items-center gap-3 cursor-pointer mb-2">
-                                    <input type="checkbox" className="w-5 h-5 text-purple-600 rounded" checked={formData.neurodivergente || false} onChange={e => setFormData({...formData, neurodivergente: e.target.checked})} />
-                                    <span className="font-bold text-slate-700 flex items-center gap-2"><Brain size={20} className="text-purple-600"/> É Neurodivergente?</span>
-                                </label>
-                                {formData.neurodivergente && (
-                                    <input className="w-full border p-2 rounded-lg mt-1 bg-white" placeholder="Qual? (Ex: TDAH, Autismo...)" value={formData.neurodivergencia_tipo || ''} onChange={e => setFormData({...formData, neurodivergencia_tipo: e.target.value})} />
-                                )}
-                            </div>
-                        </div>
-                        <div className="space-y-4">
-                            <div><label className="block text-sm font-medium text-slate-700 mb-1">Alergias e Remédios</label><textarea className="border p-2 w-full rounded-lg h-20 resize-none" placeholder="Alergia a remédios, etc..." value={formData.alergias || ''} onChange={e=>setFormData({...formData, alergias: e.target.value})} /></div>
-                            <div><label className="block text-sm font-medium text-slate-700 mb-1">Outros Detalhes</label><textarea className="border p-2 w-full rounded-lg h-20 resize-none" placeholder="Observações gerais..." value={formData.detalhes_condicao || ''} onChange={e=>setFormData({...formData, detalhes_condicao: e.target.value})} /></div>
-                        </div>
-                    </div>
-                 </div>
+                  <form onSubmit={handleSubmit} className="space-y-6">
+                      <div className="flex flex-col items-center gap-4 mb-8">
+                          <div className="relative">
+                              <div className="w-36 h-36 rounded-[2.5rem] bg-white border-4 border-white shadow-2xl overflow-hidden flex items-center justify-center">
+                                  {formData.foto_url ? <img src={formData.foto_url} className="w-full h-full object-cover" /> : <User size={50} className="text-slate-200" />}
+                                  {uploading && <div className="absolute inset-0 bg-black/40 flex items-center justify-center text-white text-[10px] font-black uppercase">Enviando...</div>}
+                              </div>
+                              <label className="absolute bottom-[-5px] right-[-5px] bg-blue-600 text-white p-3 rounded-2xl shadow-xl cursor-pointer hover:scale-110 transition-all">
+                                  <Plus size={24} /><input type="file" className="hidden" accept="image/*" onChange={handleFotoUpload} disabled={uploading} />
+                              </label>
+                          </div>
+                      </div>
 
-                 <div className="space-y-4">
-                    <h3 className="text-lg font-bold text-yellow-600 border-b pb-2 flex items-center gap-2"><Award size={20}/> Planos</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-1">Plano Escolhido</label>
-                            <select className="border p-2 w-full rounded-lg" value={formData.plano_tipo || 'Todos os dias'} onChange={e=>setFormData({...formData, plano_tipo: e.target.value})}><option value="Todos os dias">Todos os dias</option><option value="3 Dias">3 Dias na semana</option><option value="2 Dias">2 Dias na semana</option></select>
-                            {formData.plano_tipo !== 'Todos os dias' && (
-                                <div className="mt-3 flex gap-2 flex-wrap">{DIAS_SEMANA.map(dia => (<button key={dia} type="button" onClick={()=>toggleDia(dia)} className={`px-2 py-1 text-xs rounded border ${formData.plano_dias?.includes(dia) ? 'bg-blue-600 text-white' : 'bg-white'}`}>{dia}</button>))}</div>
-                            )}
-                        </div>
-                        <div className="flex flex-col gap-2">
-                            <label className="flex items-center gap-2 p-2 border rounded hover:bg-slate-50 cursor-pointer"><input type="checkbox" checked={formData.bolsista_jiujitsu || false} onChange={e=>setFormData({...formData, bolsista_jiujitsu: e.target.checked})} /><span className="text-sm font-medium">Bolsista Jiu-Jitsu</span></label>
-                            <label className="flex items-center gap-2 p-2 border rounded hover:bg-slate-50 cursor-pointer"><input type="checkbox" checked={formData.bolsista_musculacao || false} onChange={e=>setFormData({...formData, bolsista_musculacao: e.target.checked})} /><span className="text-sm font-medium">Bolsista Musculação</span></label>
-                        </div>
-                    </div>
-                 </div>
+                      <div className="bg-white rounded-[2.5rem] p-6 md:p-10 shadow-xl border border-white">
+                          <div className="flex items-center gap-3 mb-8 text-blue-600"><User size={24}/><h3 className="text-xl font-bold text-slate-800">Dados Pessoais</h3></div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                              <div className="md:col-span-2"><label className="text-xs font-bold text-slate-400 uppercase ml-1">Nome Completo</label><input className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-medium focus:ring-2 focus:ring-blue-500" required value={formData.nome || ''} onChange={e=>setFormData({...formData, nome: e.target.value})} placeholder="Ex: Jackson Lima" /></div>
+                              <div><label className="text-xs font-bold text-slate-400 uppercase ml-1">Aniversário</label><input type="date" className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-medium text-slate-600 focus:ring-2 focus:ring-blue-500" value={formData.data_nascimento || ''} onChange={e=>setFormData({...formData, data_nascimento: e.target.value})} /></div>
+                              <div><label className="text-xs font-bold text-slate-400 uppercase ml-1">WhatsApp</label><input className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-medium focus:ring-2 focus:ring-blue-500" value={formData.whatsapp || ''} onChange={e=>setFormData({...formData, whatsapp: e.target.value})} placeholder="(00) 00000-0000" /></div>
+                              <div><label className="text-xs font-bold text-slate-400 uppercase ml-1">Turma</label><select className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-bold text-blue-600" value={formData.categoria} onChange={e=>setFormData({...formData, categoria: e.target.value as any})}><option value="Adulto">🥋 Adulto</option><option value="Infantil">👦 Infantil</option><option value="Kids">👶 Kids</option></select></div>
+                              <div><label className="text-xs font-bold text-slate-400 uppercase ml-1">Graduação</label><select className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-medium focus:ring-2 focus:ring-blue-500" value={formData.graduacao} onChange={e=>setFormData({...formData, graduacao: e.target.value})}><option value="">Selecione...</option><option>Branca</option><option>Cinza</option><option>Amarela</option><option>Laranja</option><option>Verde</option><option>Azul</option><option>Roxa</option><option>Marrom</option><option>Preta</option></select></div>
+                          </div>
+                      </div>
 
-                 <div className="flex gap-3 justify-end pt-6 border-t">
-                    <button type="button" onClick={()=>setViewState('list')} className="px-6 py-2 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200">Cancelar</button>
-                    <button className="px-6 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 font-bold">Salvar Cadastro</button>
-                 </div>
-              </form>
+                      <div className="bg-white rounded-[2.5rem] p-6 md:p-10 shadow-xl border border-white">
+                          <div className="flex items-center gap-3 mb-8 text-red-600"><HeartPulse size={24}/><h3 className="text-xl font-bold text-slate-800">Saúde e Cuidados</h3></div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                              <div className="space-y-6">
+                                  <div><label className="text-xs font-bold text-slate-400 uppercase ml-1">Tipo Sanguíneo</label><select className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2" value={formData.tipo_sanguineo || ''} onChange={e=>setFormData({...formData, tipo_sanguineo: e.target.value})}><option value="">Não informado</option><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option><option>O+</option><option>O-</option></select></div>
+                                  <div className={`p-6 rounded-3xl border-2 transition-all ${formData.neurodivergente ? 'bg-purple-50 border-purple-200' : 'bg-slate-50 border-transparent'}`}>
+                                      <label className="flex items-center justify-between cursor-pointer"><div className="flex items-center gap-3"><Brain className={formData.neurodivergente ? 'text-purple-600' : 'text-slate-300'} size={24}/><span className={`font-bold ${formData.neurodivergente ? 'text-purple-700' : 'text-slate-400'}`}>Neurodivergente?</span></div><input type="checkbox" className="w-6 h-6 rounded-lg text-purple-600 border-none bg-white shadow-sm" checked={formData.neurodivergente || false} onChange={e => setFormData({...formData, neurodivergente: e.target.checked})} /></label>
+                                      {formData.neurodivergente && <input className="w-full bg-white border-none rounded-xl p-3 mt-4 text-sm font-bold text-purple-600" placeholder="Qual o tipo? (Ex: TDAH)" value={formData.neurodivergencia_tipo || ''} onChange={e => setFormData({...formData, neurodivergencia_tipo: e.target.value})} />}
+                                  </div>
+                              </div>
+                              <div className="space-y-6">
+                                  <div><label className="text-xs font-bold text-slate-400 uppercase">Alergias e Remédios</label><textarea className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 h-24 focus:ring-2 focus:ring-red-400" value={formData.alergias || ''} onChange={e=>setFormData({...formData, alergias: e.target.value})} /></div>
+                                  <div><label className="text-xs font-bold text-slate-400 uppercase">Observações</label><textarea className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 h-24" value={formData.detalhes_condicao || ''} onChange={e=>setFormData({...formData, detalhes_condicao: e.target.value})} /></div>
+                              </div>
+                          </div>
+                      </div>
+
+                      <div className="bg-white rounded-[2.5rem] p-6 md:p-10 shadow-xl border border-white">
+                          <div className="flex items-center gap-3 mb-8 text-yellow-600"><Medal size={24}/><h3 className="text-xl font-bold text-slate-800">Planos & Atleta</h3></div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                              <div className="space-y-4">
+                                  <label className="text-xs font-bold text-slate-400 uppercase">Plano Escolhido</label>
+                                  <select className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-bold text-slate-700" value={formData.plano_tipo || 'Todos os dias'} onChange={e=>setFormData({...formData, plano_tipo: e.target.value})}>
+                                      <option value="Todos os dias">Todos os dias</option>
+                                      <option value="3 Dias">3 Dias na semana</option>
+                                      <option value="2 Dias">2 Dias na semana</option>
+                                  </select>
+                                  {formData.plano_tipo !== 'Todos os dias' && (
+                                      <div className="mt-4 animate-fadeIn">
+                                          <div className="grid grid-cols-5 gap-1">
+                                              {DIAS_SEMANA.map(dia => (
+                                                  <button key={dia} type="button" onClick={()=>toggleDia(dia)} className={`py-3 rounded-xl text-[10px] font-black uppercase border-2 transition-all shadow-sm ${formData.plano_dias?.includes(dia) ? 'bg-blue-600 border-blue-600 text-white' : 'bg-slate-100 border-slate-200 text-slate-600'}`}>{dia.substring(0,3)}</button>
+                                              ))}
+                                          </div>
+                                      </div>
+                                  )}
+                              </div>
+                              <div className="grid grid-cols-1 gap-3">
+                                  <label className="flex items-center gap-4 p-4 rounded-2xl border bg-slate-50 cursor-pointer"><input type="checkbox" checked={formData.bolsista_jiujitsu || false} onChange={e=>setFormData({...formData, bolsista_jiujitsu: e.target.checked})} /><span className="font-bold">Bolsista Jiu-Jitsu</span></label>
+                                  <label className="flex items-center gap-4 p-4 rounded-2xl border bg-slate-50 cursor-pointer"><input type="checkbox" checked={formData.bolsista_musculacao || false} onChange={e=>setFormData({...formData, bolsista_musculacao: e.target.checked})} /><span className="font-bold">Bolsista Musculação</span></label>
+                                  <label className="flex items-center gap-4 p-4 rounded-2xl border bg-slate-50 cursor-pointer"><input type="checkbox" checked={formData.atleta || false} onChange={e=>setFormData({...formData, atleta: e.target.checked})} /><span className="font-bold">Aluno Atleta</span></label>
+                              </div>
+                          </div>
+                      </div>
+
+                      <div className="flex gap-4 pb-10">
+                          <button type="button" onClick={()=>setViewState('list')} className="flex-1 bg-white text-slate-400 py-5 rounded-[2rem] font-bold border border-slate-200 hover:bg-slate-50">CANCELAR</button>
+                          <button type="submit" className="flex-[2] bg-slate-900 text-white py-5 rounded-[2rem] font-black uppercase tracking-widest hover:bg-black shadow-xl">SALVAR CADASTRO</button>
+                      </div>
+                  </form>
+              </div>
           </div>
       );
   }
 
-  // --- VIEW: LISTA ---
+  // --- VIEW: LISTAGEM ---
   return (
     <div className="space-y-6 animate-fadeIn pb-20">
       <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
-          <h2 className="text-2xl font-bold text-slate-800">Gerenciar Alunos</h2>
-          <button onClick={()=>{setFormData({categoria: tabAtual, plano_tipo:'Todos os dias'}); setEditMode(false); setViewState('form')}} className="bg-blue-600 text-white px-4 py-2 rounded-lg flex gap-2 hover:bg-blue-700 shadow-sm font-bold"><Plus/> Novo Aluno</button>
+          <h2 className="text-2xl font-bold text-slate-800 italic uppercase tracking-tighter">Gerenciar Alunos</h2>
+          <button onClick={()=>{setFormData({categoria: tabAtual, plano_tipo:'Todos os dias', plano_dias: []}); setEditMode(false); setViewState('form')}} className="bg-slate-900 text-white px-6 py-3 rounded-2xl flex items-center gap-2 hover:bg-black shadow-lg transition-all font-bold text-sm w-full sm:w-auto justify-center"><Plus size={20}/> NOVO ALUNO</button>
       </div>
       
-      <div className="flex bg-slate-200 p-1 rounded-xl gap-1 w-full sm:w-auto overflow-x-auto">
-          {['Adulto', 'Infantil', 'Kids'].map(c => (<button key={c} onClick={()=>setTabAtual(c as any)} className={`flex-1 px-6 py-2 rounded-lg font-bold text-sm transition-all ${tabAtual===c?'bg-white text-blue-600 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>{c}</button>))}
+      <div className="flex bg-slate-200 p-1 rounded-2xl gap-1 overflow-x-auto">
+          {['Adulto', 'Infantil', 'Kids'].map(c => (<button key={c} onClick={()=>setTabAtual(c as any)} className={`flex-1 px-6 py-3 rounded-xl font-bold text-sm transition-all ${tabAtual===c?'bg-white text-blue-600 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>{c}</button>))}
       </div>
 
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" size={20} />
-        <input
-          type="text"
-          placeholder="Buscar aluno..."
-          className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-        />
-      </div>
-
-      <div className="bg-white rounded-xl shadow-sm overflow-hidden border border-slate-100">
+      <div className="bg-white rounded-[2rem] shadow-sm overflow-hidden border border-slate-100">
            <table className="w-full text-left">
-             <thead className="bg-slate-50 text-slate-600 text-sm uppercase tracking-wider">
-                 <tr>
-                     <th className="p-4">Aluno</th>
-                     <th className="p-4 text-center">Status Pagto.</th>
-                     <th className="p-4 text-right">Ações</th>
-                 </tr>
-             </thead>
-             <tbody className="divide-y divide-slate-100">
-                {loading ? (
-                    <tr><td colSpan={3} className="p-8 text-center text-slate-400">Carregando...</td></tr>
-                ) : filteredAlunos.length === 0 ? (
-                    <tr><td colSpan={3} className="p-8 text-center text-slate-400">Nenhum aluno encontrado.</td></tr>
-                ) : (
-                    filteredAlunos.map(aluno => (
-                        <tr key={aluno.id} className="hover:bg-slate-50 transition-colors">
-                           <td 
-                             className="p-4 cursor-pointer group"
-                             onClick={() => { setSelectedAluno(aluno); setViewState('details'); }}
-                           >
-                               <div className="flex items-center gap-3">
-                                   <div className="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center relative">
-                                       {aluno.neurodivergente ? (
-                                           <div className="absolute -top-1 -right-1 bg-purple-100 text-purple-600 p-0.5 rounded-full border border-purple-200 shadow-sm" title={aluno.neurodivergencia_tipo}><Brain size={12}/></div>
-                                       ) : (
-                                           <User className="text-slate-400"/>
-                                       )}
-                                   </div>
-                                   <div>
-                                       <div className="font-bold text-slate-800 flex items-center gap-2 group-hover:text-blue-600 transition-colors">
-                                           {aluno.nome}
-                                           {isAniversariante(aluno.data_nascimento) && <span className="animate-pulse text-pink-500"><Cake size={16}/></span>}
-                                       </div>
-                                       <div className="flex gap-1 mt-1">
-                                           <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded">{aluno.graduacao}</span>
-                                           {(aluno.bolsista_jiujitsu || aluno.bolsista_musculacao) && <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded flex items-center gap-1"><Award size={10}/> Bolsista</span>}
-                                       </div>
-                                   </div>
-                               </div>
-                           </td>
-                           <td className="p-4 text-center">
-                               {aluno.pago_mes_atual ? (
-                                   <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-bold inline-flex items-center gap-1 border border-green-200"><CheckCircle size={14}/> {aluno.bolsista_jiujitsu || aluno.bolsista_musculacao ? 'Isento' : 'Pago'}</span>
-                               ) : (
-                                   <div className="flex items-center justify-center gap-2">
-                                       <span className="bg-red-50 text-red-600 px-3 py-1 rounded-full text-xs font-bold border border-red-100">Pendente</span>
-                                       <button onClick={(e) => { e.stopPropagation(); abrirModalPagamento(aluno); }} className="p-2 bg-green-600 text-white rounded-full hover:bg-green-700 shadow-lg hover:scale-110 transition-transform"><DollarSign size={18} /></button>
-                                   </div>
-                               )}
-                           </td>
-                           <td className="p-4 text-right">
-                               <div className="flex justify-end gap-2">
-                                 <button onClick={()=>{setFormData(aluno); setEditMode(true); setViewState('form')}} className="text-blue-600 p-2 hover:bg-blue-50 rounded-lg transition-colors"><Edit size={18}/></button>
-                                 <button onClick={()=>handleDelete(aluno.id)} className="text-red-500 p-2 hover:bg-red-50 rounded-lg transition-colors"><Trash2 size={18}/></button>
-                               </div>
-                           </td>
-                        </tr>
-                     ))
-                )}
+             <thead className="bg-slate-50 text-slate-400 text-[10px] uppercase font-black tracking-widest"><tr><th className="p-5">Informação</th><th className="p-5 text-center">Status Pagto</th><th className="p-5 text-right">Ações</th></tr></thead>
+             <tbody className="divide-y divide-slate-50">
+                {filteredAlunos.map(aluno => (
+                   <tr key={aluno.id} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="p-4 cursor-pointer group" onClick={() => { setSelectedAluno(aluno); setViewState('details'); }}>
+                          <div className="flex items-center gap-4">
+                              <div className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center relative border border-slate-200 overflow-hidden shadow-inner">
+                                  {aluno.foto_url ? <img src={aluno.foto_url} className="w-full h-full object-cover" /> : <User className="text-slate-300" size={24}/>}
+                                  {aluno.neurodivergente && <div className="absolute top-1 right-1 bg-purple-600 text-white p-1 rounded-full border border-white shadow-sm"><Brain size={10}/></div>}
+                              </div>
+                              <div>
+                                  <div className="font-bold text-slate-800 flex items-center gap-2 group-hover:text-blue-600">
+                                      {aluno.nome}
+                                      {isAniversariante(aluno.data_nascimento) && (
+                                        <span className="bg-pink-100 text-pink-700 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 uppercase italic">
+                                          Aniversariante <Cake size={14} className="animate-bounce" />
+                                        </span>
+                                      )}
+                                      {aluno.atleta && <span className="w-2 h-2 rounded-full bg-blue-500" title="Atleta"></span>}
+                                  </div>
+                                  <div className="flex gap-2 mt-1">
+                                      <span className="text-[10px] font-black uppercase text-slate-400 bg-slate-100 px-2 py-0.5 rounded">{aluno.graduacao}</span>
+                                      {(aluno.bolsista_jiujitsu || aluno.bolsista_musculacao) && <span className="text-[10px] font-black uppercase bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded">Bolsista</span>}
+                                  </div>
+                              </div>
+                          </div>
+                      </td>
+                      <td className="p-4 text-center">
+                          {aluno.pago_mes_atual ? (
+                              <div className="bg-green-50 text-green-600 px-4 py-2 rounded-xl text-xs font-bold inline-flex items-center gap-2 border border-green-100"><CheckCircle size={14}/> {aluno.bolsista_jiujitsu || aluno.bolsista_musculacao ? 'ISENTO' : 'PAGO'}</div>
+                          ) : (
+                              <div className="flex items-center justify-center gap-3">
+                                  <span className="text-[10px] font-black text-red-400 uppercase tracking-tighter">Pendente</span>
+                                  <button onClick={(e) => { e.stopPropagation(); abrirModalPagamento(aluno); }} className="w-10 h-10 bg-green-500 text-white rounded-xl hover:bg-green-600 shadow-md flex items-center justify-center transition-all hover:scale-110"><DollarSign size={20} /></button>
+                              </div>
+                          )}
+                      </td>
+                      <td className="p-4 text-right">
+                          <div className="flex justify-end gap-1">
+                            <button onClick={(e)=>{ e.stopPropagation(); setFormData(aluno); setEditMode(true); setViewState('form')}} className="p-3 text-slate-400 hover:text-blue-600 rounded-xl transition-all"><Edit size={20}/></button>
+                            <button onClick={(e)=>{ e.stopPropagation(); setCustomAlert({ show: true, id: aluno.id, nome: aluno.nome }); }} className="p-3 text-slate-400 hover:text-red-500 rounded-xl transition-all"><Trash2 size={20}/></button>
+                          </div>
+                      </td>
+                   </tr>
+                ))}
              </tbody>
            </table>
       </div>
 
-      {/* MODAL PAGAMENTO (MANTIDO) */}
+      {/* MODAL PAGAMENTO COM DIVISÃO AUTOMÁTICA */}
       {pagamentoModal.show && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-            <div className="bg-white p-6 rounded-2xl w-full max-w-md shadow-2xl animate-fadeIn">
-                <div className="flex justify-between mb-4 border-b pb-4">
-                    <div><h3 className="font-bold text-xl text-slate-800">Pagamento Mensalidade</h3><p className="text-slate-500 text-sm">{pagamentoModal.aluno?.nome}</p></div>
-                    <button onClick={()=>setPagamentoModal({show:false, aluno:null, valorTotal:0})}><X size={24}/></button>
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-md shadow-2xl animate-fadeIn border">
+                <div className="flex justify-between mb-6 italic font-black uppercase"><h3>Receber Pagamento</h3><button onClick={()=>setPagamentoModal({show:false, aluno:null, valorTotal:0})}><X size={24}/></button></div>
+                <div className="bg-slate-50 rounded-3xl p-6 text-center mb-6 border border-slate-100"><p className="text-xs font-bold text-slate-400 uppercase mb-1">Total</p><p className="text-4xl font-black text-slate-900 italic">R$ {pagamentoModal.valorTotal.toFixed(2)}</p></div>
+                
+                <div className="space-y-3 mb-6">
+                    {pagamentosParciais.map((p, idx) => (
+                        <div key={idx} className="flex gap-2">
+                            <select className="flex-1 bg-slate-50 border-none rounded-2xl p-4 font-bold text-sm" value={p.metodo} onChange={e=> { const n = [...pagamentosParciais]; n[idx].metodo = e.target.value; setPagamentosParciais(n); }}>
+                                <option>Dinheiro</option><option>Pix</option><option>Cartao</option>
+                            </select>
+                            <input type="number" className="w-32 bg-slate-50 border-none rounded-2xl p-4 font-black text-slate-900" value={p.valor} onChange={e=> { const n = [...pagamentosParciais]; n[idx].valor = parseFloat(e.target.value) || 0; setPagamentosParciais(n); }} />
+                        </div>
+                    ))}
+                    <button onClick={adicionarMetodo} className="text-xs font-bold text-blue-600 uppercase tracking-widest hover:underline">+ Adicionar e dividir</button>
                 </div>
-                <div className="space-y-4">
-                    <div className="bg-blue-50 p-4 rounded-xl text-center border border-blue-100"><span className="text-sm text-blue-600 font-bold uppercase">Total a Receber</span><div className="text-3xl font-extrabold text-blue-900">R$ {pagamentoModal.valorTotal.toFixed(2)}</div></div>
-                    <div className="space-y-2">
-                        <label className="text-xs font-bold text-slate-500 uppercase">Formas de Pagamento</label>
-                        {pagamentosParciais.map((pag, idx) => (
-                            <div key={idx} className="flex gap-2 items-center">
-                                <select className="p-2 border rounded-lg bg-white flex-1 font-medium" value={pag.metodo} onChange={(e) => atualizarParcial(idx, 'metodo', e.target.value)}><option value="Dinheiro">Dinheiro</option><option value="Pix">Pix</option><option value="Cartao">Cartão</option></select>
-                                <div className="relative w-24"><span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 text-xs">R$</span><input type="number" className="w-full pl-6 p-2 border rounded-lg font-bold" value={pag.valor} onChange={(e) => atualizarParcial(idx, 'valor', parseFloat(e.target.value))} /></div>
-                                <button onClick={() => { if(pagamentosParciais.length > 1) setPagamentosParciais(pagamentosParciais.filter((_,i)=>i!==idx)) }} className="text-slate-400 hover:text-red-500"><Trash2 size={16}/></button>
-                            </div>
-                        ))}
-                        <button onClick={() => {
-                            const rest = pagamentoModal.valorTotal - pagamentosParciais.reduce((a,b)=>a+b.valor,0);
-                            setPagamentosParciais([...pagamentosParciais, {metodo:'Pix', valor: Math.max(0, rest)}]);
-                        }} className="text-xs text-blue-600 font-bold flex items-center gap-1 hover:underline mt-2"><Plus size={14}/> Dividir Pagamento</button>
-                    </div>
-                    <div className="pt-4 mt-2 border-t">
-                        <div className="flex justify-between items-center mb-4 text-sm"><span className="text-slate-500">Soma:</span><span className={`font-bold ${Math.abs(pagamentosParciais.reduce((a,b)=>a+b.valor,0) - pagamentoModal.valorTotal) < 0.1 ? 'text-green-600' : 'text-red-500'}`}>R$ {pagamentosParciais.reduce((a,b)=>a+b.valor,0).toFixed(2)}</span></div>
-                        <button onClick={confirmarPagamento} className="w-full bg-slate-900 text-white py-3 rounded-xl font-bold text-lg hover:bg-slate-800 shadow-lg">Confirmar</button>
-                    </div>
+
+                <div className="mb-6 px-2 flex justify-between items-center text-sm border-t pt-4">
+                    <span className="text-slate-400 font-bold uppercase text-[10px]">Total Somado:</span>
+                    <span className={`font-black ${Math.abs(pagamentosParciais.reduce((a,b)=>a+b.valor,0) - pagamentoModal.valorTotal) < 0.1 ? 'text-green-600' : 'text-red-500'}`}>
+                        R$ {pagamentosParciais.reduce((a,b)=>a+b.valor,0).toFixed(2)}
+                    </span>
                 </div>
+
+                <button onClick={confirmarPagamento} className="w-full bg-slate-900 text-white py-5 rounded-[1.5rem] font-black uppercase tracking-widest shadow-xl shadow-slate-200 hover:bg-black transition-all">CONFIRMAR</button>
             </div>
+        </div>
+      )}
+
+      {/* MODAL EXCLUIR (CUSTOM ALERT) */}
+      {customAlert.show && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[999] animate-fadeIn">
+          <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-sm shadow-2xl text-center">
+            <div className="w-20 h-20 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-6"><Trash2 size={40} /></div>
+            <h3 className="text-2xl font-black text-slate-800 uppercase italic mb-2">Excluir?</h3>
+            <p className="text-slate-500 mb-8 leading-relaxed">Apagar permanentemente <b>{customAlert.nome}</b>?</p>
+            <div className="flex flex-col gap-3">
+              <button onClick={executarExclusao} className="w-full py-4 bg-red-600 text-white rounded-[1.5rem] font-black uppercase shadow-xl">CONFIRMAR</button>
+              <button onClick={() => setCustomAlert({ show: false, id: '', nome: '' })} className="w-full py-4 bg-slate-100 text-slate-500 rounded-[1.5rem] font-bold uppercase text-xs">CANCELAR</button>
+            </div>
+          </div>
         </div>
       )}
     </div>

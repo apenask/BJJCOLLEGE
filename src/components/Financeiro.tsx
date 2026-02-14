@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Plus, TrendingUp, TrendingDown, DollarSign, Calendar, Trash2, Edit, X, Banknote, QrCode, CreditCard } from 'lucide-react';
+import { Plus, TrendingUp, TrendingDown, DollarSign, Calendar, Trash2, Edit, X, Banknote, QrCode, CreditCard, CheckCircle } from 'lucide-react';
 import { format } from 'date-fns';
 import { useToast } from '../contexts/ToastContext';
 
@@ -23,6 +23,15 @@ export default function Financeiro() {
   const [filtroTurma, setFiltroTurma] = useState<'Geral' | 'Adulto' | 'Infantil' | 'Kids' | 'Loja'>('Geral');
   
   const [showForm, setShowForm] = useState(false);
+
+  // --- ESTADO PARA O ALERTA PERSONALIZADO ---
+  const [customAlert, setCustomAlert] = useState({ 
+    show: false, 
+    title: '', 
+    message: '', 
+    onConfirm: () => {}, 
+    type: 'danger' as 'danger' | 'success' 
+  });
   
   // Estado do Formulário
   const [formData, setFormData] = useState({
@@ -153,7 +162,16 @@ export default function Financeiro() {
     } catch { addToast('Erro ao salvar.', 'error'); }
   }
 
-  async function handleDelete(id: string) { if (!confirm('Apagar lançamento?')) return; await supabase.from('transacoes').delete().eq('id', id); fetchDados(); }
+  // --- FUNÇÃO DE EXCLUSÃO ALTERADA PARA NÃO USAR O CONFIRM DO NAVEGADOR ---
+  async function handleDelete(id: string) { 
+    try {
+        await supabase.from('transacoes').delete().eq('id', id); 
+        addToast('Lançamento removido!', 'success');
+        fetchDados(); 
+    } catch {
+        addToast('Erro ao excluir lançamento.', 'error');
+    }
+  }
 
   return (
     <div className="space-y-6 animate-fadeIn pb-20">
@@ -189,7 +207,23 @@ export default function Financeiro() {
                     <td className="p-4"><span className="px-2 py-1 bg-slate-100 text-slate-600 rounded text-xs">{t.categoria}</span></td>
                     <td className="p-4 align-top">{renderPagamentoInfo(t)}</td>
                     <td className={`p-4 text-right font-bold ${t.tipo === 'Receita' ? 'text-green-600' : 'text-red-600'}`}>{t.tipo === 'Receita' ? '+' : '-'} R$ {Number(t.valor).toFixed(2)}</td>
-                    <td className="p-4 text-right flex justify-end gap-2"><button onClick={() => handleEdit(t)} className="text-blue-600 hover:bg-blue-50 p-1 rounded"><Edit size={16}/></button><button onClick={() => handleDelete(t.id)} className="text-red-600 hover:bg-red-50 p-1 rounded"><Trash2 size={16}/></button></td>
+                    <td className="p-4 text-right flex justify-end gap-2">
+                        <button onClick={() => handleEdit(t)} className="text-blue-600 hover:bg-blue-50 p-1 rounded"><Edit size={16}/></button>
+                        
+                        {/* BOTÃO DE EXCLUIR CHAMANDO O ALERTA CUSTOMIZADO */}
+                        <button 
+                            onClick={() => setCustomAlert({
+                                show: true,
+                                title: 'Apagar Registro?',
+                                message: `Deseja realmente remover "${t.descricao}"? Esta transação será apagada permanentemente do caixa.`,
+                                type: 'danger',
+                                onConfirm: () => handleDelete(t.id)
+                            })} 
+                            className="text-red-600 hover:bg-red-50 p-1 rounded"
+                        >
+                            <Trash2 size={16}/>
+                        </button>
+                    </td>
                     </tr>
                 ))}
                 </tbody>
@@ -209,7 +243,6 @@ export default function Financeiro() {
                     </div>
 
                     <div className="grid grid-cols-2 gap-2">
-                        {/* SELETOR DE FORMA DE PAGAMENTO (NOVO) */}
                         <select className="p-2 border rounded" value={formData.metodoPagamento} onChange={e=>setFormData({...formData, metodoPagamento: e.target.value})}>
                             <option value="Dinheiro">Dinheiro</option>
                             <option value="Pix">Pix</option>
@@ -218,16 +251,37 @@ export default function Financeiro() {
                         <input className="p-2 border rounded" type="date" value={formData.data} onChange={e=>setFormData({...formData, data: e.target.value})} />
                     </div>
 
-                    <select className="w-full p-2 border rounded" value={formData.categoria} onChange={e=>setFormData({...formData, categoria: e.target.value})}>
-                        <option value="Mensalidade">Mensalidade</option>
-                        <option value="Venda">Venda Loja</option>
-                        <option value="Fixa">Despesa Fixa</option>
-                        <option value="Variável">Despesa Variável (Equipamentos)</option>
-                        <option value="Pessoal">Pessoal</option>
-                    </select>
+                    <select className="w-full p-2 border rounded" value={formData.categoria} onChange={e=>setFormData({...formData, categoria: e.target.value})}><option value="Mensalidade">Mensalidade</option><option value="Venda">Venda Loja</option><option value="Fixa">Despesa Fixa</option><option value="Variável">Despesa Variável (Equipamentos)</option><option value="Pessoal">Pessoal</option></select>
                     <button className="w-full bg-slate-900 text-white py-2 rounded font-bold">Salvar Lançamento</button>
                 </form>
             </div>
+        </div>
+      )}
+
+      {/* MODAL DE ALERTA PERSONALIZADO */}
+      {customAlert.show && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[999] animate-fadeIn">
+          <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-sm shadow-2xl text-center border border-white">
+            <div className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 ${customAlert.type === 'danger' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
+              {customAlert.type === 'danger' ? <Trash2 size={40} /> : <CheckCircle size={40} />}
+            </div>
+            <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter italic mb-2">{customAlert.title}</h3>
+            <p className="text-slate-500 mb-8 leading-relaxed font-medium">{customAlert.message}</p>
+            <div className="flex flex-col gap-3">
+              <button 
+                onClick={() => { customAlert.onConfirm(); setCustomAlert({ ...customAlert, show: false }); }}
+                className={`w-full py-4 rounded-[1.5rem] font-black uppercase tracking-widest shadow-xl transition-all ${customAlert.type === 'danger' ? 'bg-red-600 text-white shadow-red-200 hover:bg-red-700' : 'bg-green-600 text-white shadow-green-200 hover:bg-green-700'}`}
+              >
+                Confirmar
+              </button>
+              <button 
+                onClick={() => setCustomAlert({ ...customAlert, show: false })}
+                className="w-full py-4 bg-slate-100 text-slate-500 rounded-[1.5rem] font-bold uppercase text-xs tracking-widest hover:bg-slate-200"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

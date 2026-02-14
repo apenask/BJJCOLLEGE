@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Database, Shield, Plus, Edit, Trash2, Save, X, User, Key, Lock } from 'lucide-react';
+import { 
+  Database, Shield, Plus, Edit, Trash2, Save, X, User, Key, Lock, 
+  AlertTriangle, CheckCircle 
+} from 'lucide-react';
 import { useToast } from '../contexts/ToastContext';
 
 interface AppUser {
@@ -29,6 +32,15 @@ export default function Configuracoes() {
   const [showForm, setShowForm] = useState(false);
   const [editMode, setEditMode] = useState(false);
   
+  // --- ESTADO PARA O ALERTA PERSONALIZADO ---
+  const [customAlert, setCustomAlert] = useState({ 
+    show: false, 
+    title: '', 
+    message: '', 
+    onConfirm: () => {}, 
+    type: 'danger' as 'danger' | 'success' 
+  });
+
   // Estado para conexão DB
   const [dbStatus, setDbStatus] = useState<'online' | 'offline' | 'checking'>('checking');
 
@@ -50,7 +62,6 @@ export default function Configuracoes() {
     try {
       const { data, error } = await supabase.from('app_usuarios').select('*').order('nome');
       if (error) throw error;
-      // Parse permissoes if it comes as string, though supabase js client usually handles json
       const parsedData = data?.map(u => ({
         ...u,
         permissoes: typeof u.permissoes === 'string' ? JSON.parse(u.permissoes) : u.permissoes
@@ -103,15 +114,15 @@ export default function Configuracoes() {
     }
   }
 
+  // --- FUNÇÃO DE EXCLUSÃO (CHAMADA PELO ALERTA CUSTOMIZADO) ---
   async function handleDelete(id: string) {
-    if (!window.confirm('Tem a certeza? Isto impedirá o acesso deste utilizador.')) return;
     try {
       const { error } = await supabase.from('app_usuarios').delete().eq('id', id);
       if (error) throw error;
-      addToast('Usuário removido.', 'success');
+      addToast('Usuário removido com sucesso.', 'success');
       fetchUsers();
     } catch (error) {
-      addToast('Erro ao remover.', 'error');
+      addToast('Erro ao remover usuário.', 'error');
     }
   }
 
@@ -127,7 +138,7 @@ export default function Configuracoes() {
   }
 
   return (
-    <div className="space-y-6 animate-fadeIn">
+    <div className="space-y-6 animate-fadeIn pb-20">
       <div className="flex justify-between items-center">
         <h2 className="text-2xl font-bold text-slate-800">Configurações & Acessos</h2>
         <div className="flex items-center gap-2">
@@ -137,7 +148,6 @@ export default function Configuracoes() {
         </div>
       </div>
 
-      {/* Cartão de Gerenciamento de Usuários */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
         <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
           <div>
@@ -149,11 +159,11 @@ export default function Configuracoes() {
           </div>
           <button 
             onClick={() => {
-              setFormData({ permissoes: ['dashboard', 'alunos', 'presencas'] }); // Padrão
+              setFormData({ permissoes: ['dashboard', 'alunos', 'presencas'] }); 
               setEditMode(false);
               setShowForm(true);
             }}
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 transition-colors"
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 transition-colors font-bold shadow-sm"
           >
             <Plus size={18} /> Novo Usuário
           </button>
@@ -189,7 +199,7 @@ export default function Configuracoes() {
                           ))
                         )}
                         {user.permissoes.length > 3 && !user.permissoes.includes('configuracoes') && (
-                           <span className="text-xs text-slate-400 pl-1">+{user.permissoes.length - 3}</span>
+                            <span className="text-xs text-slate-400 pl-1">+{user.permissoes.length - 3}</span>
                         )}
                       </div>
                     </td>
@@ -205,8 +215,16 @@ export default function Configuracoes() {
                         >
                           <Edit size={18} />
                         </button>
+                        
+                        {/* BOTÃO DE EXCLUIR CHAMANDO O ALERTA CUSTOMIZADO */}
                         <button 
-                          onClick={() => handleDelete(user.id)}
+                          onClick={() => setCustomAlert({
+                            show: true,
+                            title: 'Excluir Usuário?',
+                            message: `Deseja remover o acesso de "${user.nome}"? Esta ação impedirá o login deste usuário imediatamente.`,
+                            type: 'danger',
+                            onConfirm: () => handleDelete(user.id)
+                          })}
                           className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                           title="Excluir"
                         >
@@ -316,6 +334,33 @@ export default function Configuracoes() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* --- MODAL DE ALERTA PERSONALIZADO (REQUERIDO) --- */}
+      {customAlert.show && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[999] animate-fadeIn">
+          <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-sm shadow-2xl text-center border border-white">
+            <div className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 ${customAlert.type === 'danger' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
+              {customAlert.type === 'danger' ? <AlertTriangle size={40} /> : <CheckCircle size={40} />}
+            </div>
+            <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter italic mb-2">{customAlert.title}</h3>
+            <p className="text-slate-500 mb-8 leading-relaxed font-medium">{customAlert.message}</p>
+            <div className="flex flex-col gap-3">
+              <button 
+                onClick={() => { customAlert.onConfirm(); setCustomAlert({ ...customAlert, show: false }); }}
+                className={`w-full py-4 rounded-[1.5rem] font-black uppercase tracking-widest shadow-xl transition-all ${customAlert.type === 'danger' ? 'bg-red-600 text-white shadow-red-200 hover:bg-red-700' : 'bg-green-600 text-white shadow-green-200 hover:bg-green-700'}`}
+              >
+                Confirmar
+              </button>
+              <button 
+                onClick={() => setCustomAlert({ ...customAlert, show: false })}
+                className="w-full py-4 bg-slate-100 text-slate-500 rounded-[1.5rem] font-bold uppercase text-xs tracking-widest hover:bg-slate-200"
+              >
+                Cancelar
+              </button>
+            </div>
           </div>
         </div>
       )}
