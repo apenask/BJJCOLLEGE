@@ -8,9 +8,9 @@ import {
   LogOut, 
   Menu, 
   X, 
-  Monitor, 
-  CalendarCheck, 
-  Terminal 
+  Terminal,
+  GraduationCap,
+  FileText // <--- Novo ícone importado
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -26,11 +26,11 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
 
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'presencas', label: 'Presenças', icon: CalendarCheck },
     { id: 'alunos', label: 'Alunos', icon: Users },
+    { id: 'relatorios', label: 'Relatórios', icon: FileText },
+    { id: 'instrutores', label: 'Instrutores', icon: GraduationCap }, // <--- Novo Item
     { id: 'financeiro', label: 'Financeiro', icon: DollarSign },
     { id: 'cantina', label: 'Cantina', icon: Coffee },
-    { id: 'totem', label: 'Totem', icon: Monitor },
     { id: 'configuracoes', label: 'Configurações', icon: Settings },
     // Item secreto para devs
     { id: 'dev', label: 'Dev Panel', icon: Terminal, hidden: true }, 

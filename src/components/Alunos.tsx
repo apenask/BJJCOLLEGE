@@ -1,12 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Plus, Search, Edit, Trash2, User, AlertCircle, Cake, X, Activity, Trophy, Award, Star, CalendarCheck, Clock, AlertTriangle, QrCode, Download, ChevronLeft, DollarSign, Phone } from 'lucide-react';
-import { format, differenceInDays, parseISO, isValid } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
+import { Plus, Search, Edit, Trash2, User, CheckCircle, XCircle, Award, Activity, HeartPulse, Brain } from 'lucide-react';
+import { startOfMonth, endOfMonth } from 'date-fns';
 import { useToast } from '../contexts/ToastContext';
-import QRCode from 'react-qr-code';
 
-// Interface completa do Aluno
+// Interface atualizada
 interface Aluno {
   id: string;
   nome: string;
@@ -14,47 +12,47 @@ interface Aluno {
   data_nascimento: string;
   peso: number;
   graduacao: string;
+  categoria: 'Adulto' | 'Infantil' | 'Kids';
   status: string;
-  nome_responsavel: string;
-  parentesco: string;
   whatsapp: string;
+  
+  // Saúde
   tipo_sanguineo: string;
   alergias: string;
   neurodivergente: boolean;
-  detalhes_condicao: string;
-  gatilhos_cuidados: string;
-  competidor?: boolean;
-  bolsista?: boolean;
-  bolsista_a2?: boolean;
-  created_at: string;
-  ultimo_treino?: string;
-  presencas?: any[];
+  detalhes_condicao: string; // Cuidados especiais
+  
+  // Planos e Bolsas
+  plano_tipo: 'Todos os dias' | '3 Dias' | '2 Dias';
+  plano_dias: string[]; // Ex: ['Seg', 'Qua', 'Sex']
+  bolsista_jiujitsu: boolean;
+  bolsista_musculacao: boolean;
+  
+  pago_mes_atual?: boolean; // Campo calculado
 }
+
+const DIAS_SEMANA = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
 
 export default function Alunos() {
   const { addToast } = useToast();
   
-  // Estados de Dados
+  // Estados
   const [alunos, setAlunos] = useState<Aluno[]>([]);
   const [loading, setLoading] = useState(true);
-  const [dividaTotal, setDividaTotal] = useState(0);
-
-  // Estados de Controle de Visualização
-  const [viewState, setViewState] = useState<'list' | 'form' | 'details'>('list');
+  const [tabAtual, setTabAtual] = useState<'Adulto' | 'Infantil' | 'Kids'>('Adulto');
   
+  const [viewState, setViewState] = useState<'list' | 'form'>('list');
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedAluno, setSelectedAluno] = useState<Aluno | null>(null);
-  const [showQRCode, setShowQRCode] = useState<Aluno | null>(null);
   const [formData, setFormData] = useState<Partial<Aluno>>({});
   const [editMode, setEditMode] = useState(false);
 
   useEffect(() => {
     fetchAlunos();
-    // Configuração do Realtime do Supabase
+    
     const channel = supabase
-      .channel('alunos_realtime')
+      .channel('alunos_realtime_v2')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'alunos' }, () => fetchAlunos())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'presencas' }, () => fetchAlunos())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transacoes' }, () => fetchAlunos())
       .subscribe();
 
     return () => {
@@ -64,28 +62,36 @@ export default function Alunos() {
 
   async function fetchAlunos() {
     try {
-      const { data, error } = await supabase
+      setLoading(true);
+      
+      const { data: dadosAlunos, error: erroAlunos } = await supabase
         .from('alunos')
-        .select(`
-          *,
-          presencas (data_aula)
-        `)
+        .select('*')
         .order('nome');
       
-      if (error) throw error;
+      if (erroAlunos) throw erroAlunos;
 
-      const alunosComPresenca = data?.map((aluno: any) => {
-        let ultimaData = null;
-        if (aluno.presencas && aluno.presencas.length > 0) {
-          const datasOrdenadas = aluno.presencas.sort((a: any, b: any) => 
-            new Date(b.data_aula).getTime() - new Date(a.data_aula).getTime()
-          );
-          ultimaData = datasOrdenadas[0].data_aula;
-        }
-        return { ...aluno, ultimo_treino: ultimaData };
-      });
+      // Verifica pagamentos
+      const inicioMes = startOfMonth(new Date()).toISOString();
+      const fimMes = endOfMonth(new Date()).toISOString();
 
-      setAlunos(alunosComPresenca || []);
+      const { data: pagamentos } = await supabase
+        .from('transacoes')
+        .select('aluno_id')
+        .eq('tipo', 'Receita')
+        .gte('data', inicioMes)
+        .lte('data', fimMes)
+        .not('aluno_id', 'is', null);
+
+      const pagantesSet = new Set(pagamentos?.map(p => p.aluno_id));
+
+      const alunosProcessados = dadosAlunos?.map((aluno: any) => ({
+        ...aluno,
+        // Considera pago se tiver pagamento OU se for bolsista TOTAL (Jiu + Musculação) - Ajuste conforme sua regra
+        pago_mes_atual: pagantesSet.has(aluno.id) || (aluno.bolsista_jiujitsu && aluno.bolsista_musculacao)
+      }));
+
+      setAlunos(alunosProcessados || []);
     } catch (error) {
       console.error('Erro ao buscar alunos:', error);
     } finally {
@@ -93,85 +99,68 @@ export default function Alunos() {
     }
   }
 
-  async function handleOpenDetails(aluno: Aluno) {
-    setSelectedAluno(aluno);
-    setViewState('details');
-    
-    const { data: vendas } = await supabase
-      .from('vendas')
-      .select('total')
-      .eq('aluno_id', aluno.id)
-      .eq('status', 'Fiado');
-
-    if (vendas) {
-      const totalDevendo = vendas.reduce((acc, venda) => acc + Number(venda.total), 0);
-      setDividaTotal(totalDevendo);
-    } else {
-      setDividaTotal(0);
-    }
-  }
-
-  function handleBackToList() {
-    setViewState('list');
-    setSelectedAluno(null);
-    setFormData({});
-  }
-
-  async function handleCheckIn(e: React.MouseEvent, alunoId: string, nomeAluno: string) {
+  async function handleConfirmarPagamento(e: React.MouseEvent, aluno: Aluno) {
     e.stopPropagation();
-    if (!window.confirm(`Confirmar presença de hoje para ${nomeAluno}?`)) return;
+    // Define o valor com base no plano
+    let valorPlano = 80.00;
+    if (aluno.plano_tipo === '3 Dias') valorPlano = 70.00;
+    if (aluno.plano_tipo === '2 Dias') valorPlano = 60.00;
+
+    if (!window.confirm(`Confirmar pagamento de R$ ${valorPlano.toFixed(2)} para ${aluno.nome}?`)) return;
 
     try {
-      const { error } = await supabase.from('presencas').insert([{
-        aluno_id: alunoId,
-        data_aula: new Date().toISOString()
+      const { error } = await supabase.from('transacoes').insert([{
+        descricao: `Mensalidade (${aluno.plano_tipo}) - ${aluno.nome}`,
+        valor: valorPlano,
+        tipo: 'Receita',
+        categoria: 'Mensalidade',
+        data: new Date().toISOString(),
+        aluno_id: aluno.id
       }]);
 
       if (error) throw error;
-      addToast(`Presença confirmada para ${nomeAluno}! 🥋`, 'success');
-    } catch (error) {
-      console.error('Erro ao marcar presença:', error);
-      addToast('Erro ao marcar presença.', 'error');
+      addToast(`Pagamento de ${aluno.nome} confirmado!`, 'success');
+      fetchAlunos();
+    } catch (error: any) {
+      addToast('Erro ao registrar pagamento.', 'error');
     }
   }
 
+  // Controle dos Dias da Semana no Formulário
+  const toggleDia = (dia: string) => {
+    const diasAtuais = formData.plano_dias || [];
+    if (diasAtuais.includes(dia)) {
+      setFormData({ ...formData, plano_dias: diasAtuais.filter(d => d !== dia) });
+    } else {
+      setFormData({ ...formData, plano_dias: [...diasAtuais, dia] });
+    }
+  };
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!formData.nome || !formData.graduacao) {
-      addToast('Por favor, preencha o Nome e a Graduação.', 'warning');
+    if (!formData.nome || !formData.categoria) {
+      addToast('Nome e Turma são obrigatórios.', 'warning');
       return;
     }
 
+    // Validação do Plano
+    if ((formData.plano_tipo === '3 Dias' || formData.plano_tipo === '2 Dias') && (!formData.plano_dias || formData.plano_dias.length === 0)) {
+        addToast('Para planos parciais, selecione os dias da semana.', 'warning');
+        return;
+    }
+
     try {
-      const alunoData = {
-        nome: formData.nome,
-        foto_url: formData.foto_url,
-        data_nascimento: formData.data_nascimento,
-        peso: formData.peso,
-        graduacao: formData.graduacao,
-        status: formData.status || 'Ativo',
-        nome_responsavel: formData.nome_responsavel,
-        parentesco: formData.parentesco,
-        whatsapp: formData.whatsapp,
-        tipo_sanguineo: formData.tipo_sanguineo,
-        alergias: formData.alergias,
-        neurodivergente: formData.neurodivergente || false,
-        detalhes_condicao: formData.detalhes_condicao,
-        gatilhos_cuidados: formData.gatilhos_cuidados,
-        competidor: formData.competidor || false,
-        bolsista: formData.bolsista || false,
-        bolsista_a2: formData.bolsista_a2 || false,
-      };
-      
+      const alunoData = { ...formData };
+      delete (alunoData as any).pago_mes_atual; // Remove campo calculado
+
       if (editMode && formData.id) {
         const { error } = await supabase.from('alunos').update(alunoData).eq('id', formData.id);
         if (error) throw error;
-        addToast('Aluno atualizado com sucesso!', 'success');
+        addToast('Aluno atualizado!', 'success');
       } else {
-        const { data, error } = await supabase.from('alunos').insert([alunoData]).select().single();
+        const { error } = await supabase.from('alunos').insert([alunoData]);
         if (error) throw error;
-        addToast('Aluno cadastrado com sucesso!', 'success');
-        if (data) setShowQRCode(data as Aluno);
+        addToast('Aluno cadastrado!', 'success');
       }
       
       setFormData({});
@@ -179,420 +168,336 @@ export default function Alunos() {
       setViewState('list');
       fetchAlunos();
     } catch (error: any) {
-      console.error('Erro ao salvar:', error);
-      addToast(`Erro ao salvar: ${error.message}`, 'error');
+      addToast(`Erro: ${error.message}`, 'error');
     }
   }
 
   async function handleDelete(id: string) {
-    if (!window.confirm('Tem certeza que deseja excluir este aluno?')) return;
+    if (!window.confirm('Excluir aluno permanentemente?')) return;
     try {
-      const { error } = await supabase.from('alunos').delete().eq('id', id);
-      if (error) throw error;
+      await supabase.from('alunos').delete().eq('id', id);
       addToast('Aluno removido.', 'success');
       fetchAlunos();
-    } catch (error) {
-      console.error('Erro ao excluir:', error);
-      addToast('Erro ao excluir aluno.', 'error');
+    } catch {
+      addToast('Erro ao excluir.', 'error');
     }
   }
 
-  function formatDateSafe(dateStr?: string) {
-    if (!dateStr) return '-';
-    const date = new Date(dateStr);
-    return isValid(date) ? format(date, "dd 'de' MMMM", { locale: ptBR }) : '-';
-  }
-
-  function getStatusPresenca(ultimoTreino?: string) {
-    if (!ultimoTreino) return { dias: null, label: 'Sem registro', color: 'bg-slate-100 text-slate-500' };
-    const dias = differenceInDays(new Date(), parseISO(ultimoTreino));
-    if (dias === 0) return { dias, label: 'Veio Hoje', color: 'bg-green-100 text-green-700' };
-    if (dias <= 7) return { dias, label: `${dias} dias atrás`, color: 'bg-blue-50 text-blue-600' };
-    if (dias <= 14) return { dias, label: `${dias} dias ausente`, color: 'bg-yellow-100 text-yellow-700' };
-    return { dias, label: `${dias} dias s/ treinar`, color: 'bg-red-100 text-red-700 font-bold' };
-  }
-
-  const filteredAlunos = alunos.filter(aluno =>
+  const filteredAlunos = alunos.filter(aluno => 
+    (aluno.categoria === tabAtual || (!aluno.categoria && tabAtual === 'Adulto')) &&
     aluno.nome.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  // --- RENDERIZAÇÃO ---
-
-  // 1. TELA DE FORMULÁRIO
+  // --- TELA DE FORMULÁRIO ---
   if (viewState === 'form') {
     return (
       <div className="bg-white rounded-xl shadow-sm p-6 animate-fadeIn">
-        <div className="flex items-center gap-4 mb-6 border-b pb-4">
-          <button onClick={handleBackToList} className="p-2 hover:bg-slate-100 rounded-full">
-            <ChevronLeft size={24} />
-          </button>
-          <h2 className="text-2xl font-bold text-slate-800">
-            {editMode ? 'Editar Aluno' : 'Novo Aluno'}
-          </h2>
-        </div>
-        
-        <form onSubmit={handleSubmit} className="space-y-6 max-w-4xl mx-auto">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Nome Completo</label>
-                  <input type="text" required className="w-full p-2 border rounded-lg" value={formData.nome || ''} onChange={e => setFormData({...formData, nome: e.target.value})} />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Foto URL</label>
-                  <input type="text" className="w-full p-2 border rounded-lg" value={formData.foto_url || ''} onChange={e => setFormData({...formData, foto_url: e.target.value})} />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Data de Nascimento</label>
-                  <input type="date" className="w-full p-2 border rounded-lg" value={formData.data_nascimento || ''} onChange={e => setFormData({...formData, data_nascimento: e.target.value})} />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Peso (kg)</label>
-                  <input type="number" className="w-full p-2 border rounded-lg" value={formData.peso || ''} onChange={e => setFormData({...formData, peso: parseFloat(e.target.value)})} />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Graduação</label>
-                  <select className="w-full p-2 border rounded-lg bg-white" value={formData.graduacao || ''} onChange={e => setFormData({...formData, graduacao: e.target.value})}>
-                    <option value="">Selecione...</option>
-                    <optgroup label="Kids"><option value="Branca">Faixa Branca</option><option value="Cinza">Faixa Cinza</option><option value="Amarela">Faixa Amarela</option><option value="Laranja">Faixa Laranja</option><option value="Verde">Faixa Verde</option></optgroup>
-                    <optgroup label="Adulto"><option value="Branca">Faixa Branca</option><option value="Azul">Faixa Azul</option><option value="Roxa">Faixa Roxa</option><option value="Marrom">Faixa Marrom</option><option value="Preta">Faixa Preta</option></optgroup>
-                  </select>
-                </div>
-                <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Status</label>
-                    <select className="w-full p-2 border rounded-lg" value={formData.status || 'Ativo'} onChange={e => setFormData({...formData, status: e.target.value})}>
-                        <option value="Ativo">Ativo</option>
-                        <option value="Inativo">Inativo</option>
-                    </select>
-                </div>
-            </div>
-
-            <div className="border-t pt-4">
-                 <h4 className="font-semibold text-slate-800 mb-3 flex items-center gap-2"><Award size={18} className="text-yellow-500" /> Classificação</h4>
-                 <div className="flex gap-4">
-                    <label className="flex items-center gap-2 cursor-pointer bg-slate-50 p-3 rounded border">
-                        <input type="checkbox" checked={formData.competidor || false} onChange={e => setFormData({...formData, competidor: e.target.checked})} />
-                        <span>Competidor</span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer bg-slate-50 p-3 rounded border">
-                        <input type="checkbox" checked={formData.bolsista || false} onChange={e => setFormData({...formData, bolsista: e.target.checked})} />
-                        <span>Bolsista</span>
-                    </label>
-                 </div>
-            </div>
-
-            <div className="border-t pt-4">
-                <h4 className="font-semibold text-slate-800 mb-3">Responsável (Menores)</h4>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <input type="text" placeholder="Nome do Responsável" className="w-full p-2 border rounded-lg" value={formData.nome_responsavel || ''} onChange={e => setFormData({...formData, nome_responsavel: e.target.value})} />
-                    <input type="text" placeholder="WhatsApp" className="w-full p-2 border rounded-lg" value={formData.whatsapp || ''} onChange={e => setFormData({...formData, whatsapp: e.target.value})} />
+        <h2 className="text-2xl font-bold text-slate-800 mb-6">{editMode ? 'Editar Aluno' : 'Novo Aluno'}</h2>
+        <form onSubmit={handleSubmit} className="space-y-8 max-w-5xl mx-auto">
+            
+            {/* SEÇÃO 1: DADOS BÁSICOS */}
+            <div>
+                <h3 className="text-lg font-bold text-slate-700 mb-4 border-b pb-2 flex items-center gap-2">
+                    <User size={20} className="text-blue-600"/> Dados Pessoais e Contato
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div className="lg:col-span-2">
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Nome Completo</label>
+                        <input type="text" required className="w-full p-2 border rounded-lg" value={formData.nome || ''} onChange={e => setFormData({...formData, nome: e.target.value})} />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">WhatsApp</label>
+                        <input type="text" className="w-full p-2 border rounded-lg" value={formData.whatsapp || ''} onChange={e => setFormData({...formData, whatsapp: e.target.value})} />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Turma / Categoria</label>
+                        <select required className="w-full p-2 border rounded-lg bg-blue-50 border-blue-200 text-blue-900 font-medium" value={formData.categoria || ''} onChange={e => setFormData({...formData, categoria: e.target.value as any})}>
+                            <option value="">Selecione...</option>
+                            <option value="Adulto">Adulto</option>
+                            <option value="Infantil">Infantil</option>
+                            <option value="Kids">Kids (Pequenos)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Graduação</label>
+                        <select className="w-full p-2 border rounded-lg bg-white" value={formData.graduacao || ''} onChange={e => setFormData({...formData, graduacao: e.target.value})}>
+                            <option value="">Selecione...</option>
+                            <optgroup label="Kids"><option value="Branca">Branca</option><option value="Cinza">Cinza</option><option value="Amarela">Amarela</option><option value="Laranja">Laranja</option><option value="Verde">Verde</option></optgroup>
+                            <optgroup label="Adulto"><option value="Branca">Branca</option><option value="Azul">Azul</option><option value="Roxa">Roxa</option><option value="Marrom">Marrom</option><option value="Preta">Preta</option></optgroup>
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Status</label>
+                        <select className="w-full p-2 border rounded-lg" value={formData.status || 'Ativo'} onChange={e => setFormData({...formData, status: e.target.value})}>
+                            <option value="Ativo">Ativo</option>
+                            <option value="Inativo">Inativo</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Data Nascimento</label>
+                        <input type="date" className="w-full p-2 border rounded-lg" value={formData.data_nascimento || ''} onChange={e => setFormData({...formData, data_nascimento: e.target.value})} />
+                    </div>
                 </div>
             </div>
 
-            <div className="border-t pt-4">
-                <h4 className="font-semibold text-slate-800 mb-3">Saúde</h4>
-                <textarea className="w-full p-2 border rounded-lg" placeholder="Alergias, remédios..." value={formData.alergias || ''} onChange={e => setFormData({...formData, alergias: e.target.value})} />
+            {/* SEÇÃO 2: PLANOS E BOLSAS */}
+            <div className="bg-slate-50 p-6 rounded-xl border border-slate-200">
+                <h3 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2">
+                    <Award size={20} className="text-yellow-600"/> Planos & Bolsas
+                </h3>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    {/* Escolha do Plano */}
+                    <div>
+                        <label className="block text-sm font-bold text-slate-700 mb-2">Plano de Pagamento</label>
+                        <select 
+                            className="w-full p-3 border rounded-lg bg-white shadow-sm mb-4" 
+                            value={formData.plano_tipo || 'Todos os dias'} 
+                            onChange={e => setFormData({...formData, plano_tipo: e.target.value as any})}
+                        >
+                            <option value="Todos os dias">Todos os dias (R$ 80,00)</option>
+                            <option value="3 Dias">3 Dias na semana (R$ 70,00)</option>
+                            <option value="2 Dias">2 Dias na semana (R$ 60,00)</option>
+                        </select>
+
+                        {/* Seleção de Dias (Só aparece se não for todos os dias) */}
+                        {formData.plano_tipo !== 'Todos os dias' && (
+                            <div className="bg-white p-3 rounded-lg border">
+                                <span className="block text-xs font-bold text-slate-500 uppercase mb-2">Selecione os dias:</span>
+                                <div className="flex flex-wrap gap-2">
+                                    {DIAS_SEMANA.map(dia => (
+                                        <button
+                                            key={dia}
+                                            type="button"
+                                            onClick={() => toggleDia(dia)}
+                                            className={`px-3 py-1 text-sm rounded-full border transition-colors ${
+                                                formData.plano_dias?.includes(dia)
+                                                ? 'bg-blue-600 text-white border-blue-600'
+                                                : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                                            }`}
+                                        >
+                                            {dia}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Checkbox de Bolsas */}
+                    <div>
+                        <label className="block text-sm font-bold text-slate-700 mb-2">Tipo de Bolsa</label>
+                        <div className="space-y-3">
+                            <label className="flex items-center gap-3 p-3 bg-white border rounded-lg cursor-pointer hover:bg-slate-50">
+                                <input 
+                                    type="checkbox" 
+                                    className="w-5 h-5 text-blue-600 rounded"
+                                    checked={formData.bolsista_jiujitsu || false} 
+                                    onChange={e => setFormData({...formData, bolsista_jiujitsu: e.target.checked})} 
+                                />
+                                <span className="font-medium text-slate-700">Bolsista Jiu-Jitsu</span>
+                            </label>
+
+                            <label className="flex items-center gap-3 p-3 bg-white border rounded-lg cursor-pointer hover:bg-slate-50">
+                                <input 
+                                    type="checkbox" 
+                                    className="w-5 h-5 text-blue-600 rounded"
+                                    checked={formData.bolsista_musculacao || false} 
+                                    onChange={e => setFormData({...formData, bolsista_musculacao: e.target.checked})} 
+                                />
+                                <span className="font-medium text-slate-700">Bolsista Musculação</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
             </div>
 
-            <div className="flex justify-end gap-3 pt-4">
-                <button type="button" onClick={handleBackToList} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg">Cancelar</button>
-                <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Salvar</button>
+            {/* SEÇÃO 3: SAÚDE E CUIDADOS (Novos Campos) */}
+            <div>
+                <h3 className="text-lg font-bold text-slate-700 mb-4 border-b pb-2 flex items-center gap-2">
+                    <HeartPulse size={20} className="text-red-500"/> Saúde & Cuidados Especiais
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <div className="flex items-center gap-4 mb-4">
+                            <div className="flex-1">
+                                <label className="block text-sm font-medium text-slate-700 mb-1">Tipo Sanguíneo</label>
+                                <select className="w-full p-2 border rounded-lg" value={formData.tipo_sanguineo || ''} onChange={e => setFormData({...formData, tipo_sanguineo: e.target.value})}>
+                                    <option value="">Não informado</option>
+                                    <option value="A+">A+</option><option value="A-">A-</option>
+                                    <option value="B+">B+</option><option value="B-">B-</option>
+                                    <option value="AB+">AB+</option><option value="AB-">AB-</option>
+                                    <option value="O+">O+</option><option value="O-">O-</option>
+                                </select>
+                            </div>
+                            
+                            <div className="flex-1">
+                                <label className="block text-sm font-medium text-slate-700 mb-1">Neurodivergente?</label>
+                                <div className="flex items-center gap-2 mt-2">
+                                    <button 
+                                        type="button"
+                                        onClick={() => setFormData({...formData, neurodivergente: !formData.neurodivergente})}
+                                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${formData.neurodivergente ? 'bg-indigo-600' : 'bg-slate-200'}`}
+                                    >
+                                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${formData.neurodivergente ? 'translate-x-6' : 'translate-x-1'}`} />
+                                    </button>
+                                    <span className="text-sm text-slate-600">{formData.neurodivergente ? 'Sim' : 'Não'}</span>
+                                    {formData.neurodivergente && <Brain size={18} className="text-indigo-600 ml-1" />}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="md:col-span-2">
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Cuidados Especiais / Alergias / Observações</label>
+                        <textarea 
+                            className="w-full p-2 border rounded-lg h-24" 
+                            placeholder="Descreva aqui se o aluno precisa de alguma atenção especial, tem alergias ou detalhes sobre a neurodivergência..."
+                            value={formData.detalhes_condicao || ''} 
+                            onChange={e => setFormData({...formData, detalhes_condicao: e.target.value})} 
+                        />
+                    </div>
+                </div>
+            </div>
+
+            <div className="flex justify-end gap-3 pt-6 border-t mt-6">
+                <button type="button" onClick={() => setViewState('list')} className="px-6 py-2 text-slate-600 hover:bg-slate-100 rounded-lg">Cancelar</button>
+                <button type="submit" className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">Salvar Cadastro</button>
             </div>
         </form>
       </div>
     );
   }
 
-  // 2. TELA DE DETALHES (Reorganizada e Sem Botão de Carteirinha)
-  if (viewState === 'details' && selectedAluno) {
-    return (
-      <div className="bg-white rounded-xl shadow-sm overflow-hidden animate-fadeIn min-h-[80vh]">
-        {/* Cabeçalho com Foto e Nome */}
-        <div className="relative h-48 bg-gradient-to-r from-blue-700 to-slate-900 p-6 flex items-end">
-          <button 
-            onClick={handleBackToList}
-            className="absolute top-4 left-4 bg-white/20 hover:bg-white/30 text-white p-2 rounded-full backdrop-blur-sm transition-all flex items-center gap-2 pr-4 z-10"
-          >
-            <ChevronLeft size={20} /> Voltar
-          </button>
-          
-          <div className="flex items-end gap-6 translate-y-10 w-full max-w-5xl mx-auto px-4">
-            <div className="w-32 h-32 rounded-2xl border-4 border-white bg-slate-200 overflow-hidden shadow-xl relative group flex-shrink-0">
-              {selectedAluno.foto_url ? (
-                <img src={selectedAluno.foto_url} alt="" className="w-full h-full object-cover" />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center bg-slate-100">
-                  <User size={48} className="text-slate-400" />
-                </div>
-              )}
-            </div>
-            <div className="mb-2 pb-1 flex-1">
-              <div className="flex flex-wrap items-center gap-3">
-                 <h1 className="text-2xl sm:text-3xl font-bold text-white shadow-sm">{selectedAluno.nome}</h1>
-                 {selectedAluno.competidor && <span className="bg-yellow-500 text-yellow-950 text-xs font-bold px-2 py-1 rounded">Competidor</span>}
-              </div>
-              <p className="text-blue-100 flex flex-wrap items-center gap-2 mt-1">
-                 <span className="px-2 py-0.5 bg-white/20 rounded text-sm">{selectedAluno.graduacao}</span>
-                 {selectedAluno.bolsista && <span className="px-2 py-0.5 bg-green-500/20 border border-green-400/50 rounded text-sm text-green-100">Bolsista</span>}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Conteúdo dos Detalhes */}
-        <div className="mt-16 max-w-5xl mx-auto p-6 space-y-6">
-            
-            {/* LINHA DE STATUS (As 3 Caixas Alinhadas) */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {/* Box 1: Situação Cadastral */}
-                <div className={`p-5 rounded-xl border-l-4 shadow-sm flex items-center justify-between ${
-                    selectedAluno.status === 'Ativo' ? 'bg-green-50 border-green-500' : 'bg-red-50 border-red-500'
-                }`}>
-                    <div>
-                        <p className="text-sm font-medium text-slate-600">Situação</p>
-                        <h3 className={`text-xl font-bold ${selectedAluno.status === 'Ativo' ? 'text-green-700' : 'text-red-700'}`}>
-                            {selectedAluno.status}
-                        </h3>
-                    </div>
-                    <div className={`p-3 rounded-full ${selectedAluno.status === 'Ativo' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
-                        <Activity size={24} />
-                    </div>
-                </div>
-
-                {/* Box 2: Dívida */}
-                <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
-                    <div>
-                        <p className="text-sm font-medium text-slate-500">Dívida Cantina</p>
-                        <h3 className={`text-xl font-bold ${dividaTotal > 0 ? 'text-red-600' : 'text-slate-800'}`}>
-                            R$ {dividaTotal.toFixed(2).replace('.', ',')}
-                        </h3>
-                    </div>
-                    <div className="p-3 bg-slate-100 rounded-full text-slate-500">
-                        <DollarSign size={24} />
-                    </div>
-                </div>
-
-                {/* Box 3: Último Treino */}
-                 <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
-                    <div>
-                        <p className="text-sm font-medium text-slate-500">Última Presença</p>
-                        {(() => {
-                            const status = getStatusPresenca(selectedAluno.ultimo_treino);
-                            return (
-                                <h3 className={`text-lg font-bold ${status.color.replace('bg-', 'text-').split(' ')[1] || 'text-slate-700'}`}>
-                                    {status.label}
-                                </h3>
-                            )
-                        })()}
-                    </div>
-                    <div className="p-3 bg-blue-50 rounded-full text-blue-600">
-                        <CalendarCheck size={24} />
-                    </div>
-                </div>
-            </div>
-
-            {/* DADOS COMPLETOS */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <div className="lg:col-span-2 bg-white border rounded-xl p-6 shadow-sm h-full">
-                    <h3 className="font-bold text-lg text-slate-800 mb-6 flex items-center gap-2 border-b pb-2">
-                        <User size={20} className="text-blue-600" /> Dados Pessoais
-                    </h3>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-6 gap-x-8">
-                        <div>
-                            <span className="block text-sm text-slate-500 mb-1">Data Nascimento</span>
-                            <span className="font-medium text-slate-900 text-lg">{formatDateSafe(selectedAluno.data_nascimento)}</span>
-                        </div>
-                        <div>
-                            <span className="block text-sm text-slate-500 mb-1">Peso Atual</span>
-                            <span className="font-medium text-slate-900 text-lg">{selectedAluno.peso} kg</span>
-                        </div>
-                        <div className="sm:col-span-2">
-                            <span className="block text-sm text-slate-500 mb-1">Contato (WhatsApp)</span>
-                            <div className="flex items-center gap-2">
-                                <Phone size={18} className="text-green-600" />
-                                <span className="font-medium text-slate-900 text-lg">{selectedAluno.whatsapp || 'Não informado'}</span>
-                            </div>
-                        </div>
-                        {selectedAluno.nome_responsavel && (
-                             <div className="sm:col-span-2 bg-slate-50 p-4 rounded-xl border border-slate-200 mt-2">
-                                <span className="block text-xs font-bold text-slate-500 uppercase mb-1">Responsável Legal</span>
-                                <span className="font-medium text-slate-900 text-lg block">{selectedAluno.nome_responsavel}</span>
-                                <span className="text-slate-500 text-sm">({selectedAluno.parentesco})</span>
-                            </div>
-                        )}
-                    </div>
-                </div>
-
-                <div className="space-y-6">
-                    {(selectedAluno.alergias || selectedAluno.neurodivergente || selectedAluno.tipo_sanguineo) ? (
-                        <div className="bg-white border rounded-xl p-6 shadow-sm h-full">
-                            <h3 className="font-bold text-lg text-slate-800 mb-6 flex items-center gap-2 border-b pb-2">
-                                <AlertCircle size={20} className="text-red-500" /> Saúde & Cuidados
-                            </h3>
-                            <div className="space-y-6">
-                                {selectedAluno.tipo_sanguineo && (
-                                    <div>
-                                        <span className="text-slate-500 text-sm block mb-1">Tipo Sanguíneo</span>
-                                        <span className="font-bold text-lg bg-red-100 text-red-700 px-3 py-1 rounded-full inline-block">
-                                            {selectedAluno.tipo_sanguineo}
-                                        </span>
-                                    </div>
-                                )}
-                                {selectedAluno.alergias && (
-                                    <div className="bg-red-50 p-4 rounded-xl border border-red-100">
-                                        <strong className="text-red-800 text-sm block mb-1">⚠️ Alergias / Medicamentos</strong>
-                                        <p className="text-slate-700">{selectedAluno.alergias}</p>
-                                    </div>
-                                )}
-                                {selectedAluno.neurodivergente && (
-                                    <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100">
-                                        <strong className="text-indigo-800 text-sm block mb-1">🧩 Neurodivergência</strong>
-                                        <p className="text-slate-700 font-medium">{selectedAluno.detalhes_condicao}</p>
-                                        {selectedAluno.gatilhos_cuidados && (
-                                            <p className="mt-2 pt-2 border-t border-indigo-200 text-slate-600 text-sm">
-                                                <span className="font-bold text-indigo-700">Cuidados:</span> {selectedAluno.gatilhos_cuidados}
-                                            </p>
-                                        )}
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    ) : (
-                        <div className="bg-slate-50 border border-dashed border-slate-300 rounded-xl p-6 flex flex-col items-center justify-center text-center h-full text-slate-400">
-                            <AlertCircle size={32} className="mb-2 opacity-50" />
-                            <p>Sem observações de saúde cadastradas.</p>
-                        </div>
-                    )}
-                </div>
-            </div>
-        </div>
-      </div>
-    );
-  }
-
-  // 3. TELA DE LISTA (Padrão - Com o botão da Carteirinha adicionado)
+  // --- TELA DE LISTA ---
   return (
     <div className="space-y-6 animate-fadeIn">
+      {/* HEADER */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <h2 className="text-2xl font-bold text-slate-800">Alunos</h2>
+        <h2 className="text-2xl font-bold text-slate-800">Gerenciar Alunos</h2>
         <button
-          onClick={() => { setFormData({}); setEditMode(false); setViewState('form'); }}
-          className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 transition-colors"
+          onClick={() => { setFormData({ plano_tipo: 'Todos os dias', plano_dias: [], bolsista_jiujitsu: false, bolsista_musculacao: false }); setEditMode(false); setViewState('form'); }}
+          className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-blue-700 transition-colors shadow-sm"
         >
           <Plus size={20} /> Novo Aluno
         </button>
       </div>
 
+      {/* ABAS */}
+      <div className="flex p-1 bg-slate-200 rounded-xl gap-1">
+          {(['Adulto', 'Infantil', 'Kids'] as const).map((cat) => (
+              <button
+                key={cat}
+                onClick={() => setTabAtual(cat)}
+                className={`flex-1 py-3 rounded-lg text-sm font-bold transition-all ${
+                    tabAtual === cat 
+                    ? 'bg-white text-blue-600 shadow-sm' 
+                    : 'text-slate-500 hover:text-slate-700 hover:bg-slate-300/50'
+                }`}
+              >
+                  {cat}s
+              </button>
+          ))}
+      </div>
+
+      {/* BUSCA */}
       <div className="relative">
         <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" size={20} />
         <input
           type="text"
-          placeholder="Buscar aluno..."
-          className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          placeholder={`Buscar aluno ${tabAtual.toLowerCase()}...`}
+          className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
         />
       </div>
 
+      {/* TABELA */}
       {loading ? (
         <div className="text-center py-8">Carregando...</div>
       ) : (
-        <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+        <div className="bg-white rounded-xl shadow-sm overflow-hidden border border-slate-100">
           <table className="w-full text-left">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
                 <th className="p-4 font-semibold text-slate-600">Aluno</th>
-                <th className="p-4 font-semibold text-slate-600 hidden sm:table-cell">Graduação</th>
-                <th className="p-4 font-semibold text-slate-600">Status</th>
+                <th className="p-4 font-semibold text-slate-600 hidden md:table-cell">Plano / Dias</th>
+                <th className="p-4 font-semibold text-slate-600 text-center">Status Pagto.</th>
                 <th className="p-4 font-semibold text-slate-600 text-right">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredAlunos.map((aluno) => {
-                const statusPresenca = getStatusPresenca(aluno.ultimo_treino);
-                return (
-                  <tr key={aluno.id} className="hover:bg-slate-50 transition-colors cursor-pointer group" onClick={() => handleOpenDetails(aluno)}>
+              {filteredAlunos.length === 0 ? (
+                  <tr><td colSpan={4} className="p-8 text-center text-slate-500">Nenhum aluno encontrado nesta turma.</td></tr>
+              ) : (
+                filteredAlunos.map((aluno) => (
+                  <tr key={aluno.id} className="hover:bg-slate-50 transition-colors group">
                     <td className="p-4">
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center overflow-hidden">
+                        <div className="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center overflow-hidden relative">
                           {aluno.foto_url ? <img src={aluno.foto_url} className="w-full h-full object-cover" /> : <User size={20} className="text-slate-400" />}
+                          {aluno.neurodivergente && (
+                              <div className="absolute bottom-0 right-0 bg-indigo-500 w-3 h-3 rounded-full border border-white" title="Neurodivergente"></div>
+                          )}
                         </div>
                         <div>
-                          <div className="font-medium text-slate-900 group-hover:text-blue-600 transition-colors">{aluno.nome}</div>
-                          <div className="text-xs text-slate-500 sm:hidden">{statusPresenca.label}</div>
+                          <div className="font-medium text-slate-900 flex items-center gap-2">
+                              {aluno.nome}
+                              {aluno.neurodivergente && <Brain size={14} className="text-indigo-500" />}
+                          </div>
+                          <div className="flex gap-1 mt-0.5">
+                            <span className="text-xs bg-slate-100 px-1.5 py-0.5 rounded text-slate-600">{aluno.graduacao}</span>
+                            {aluno.bolsista_jiujitsu && <span className="text-xs bg-yellow-100 px-1.5 py-0.5 rounded text-yellow-700">Bolsa JJ</span>}
+                            {aluno.bolsista_musculacao && <span className="text-xs bg-orange-100 px-1.5 py-0.5 rounded text-orange-700">Bolsa Gym</span>}
+                          </div>
                         </div>
                       </div>
                     </td>
-                    <td className="p-4 hidden sm:table-cell"><span className="bg-slate-100 px-2 py-1 rounded text-sm">{aluno.graduacao}</span></td>
-                    <td className="p-4">
-                        <span className={`text-xs px-2 py-1 rounded-full font-bold ${statusPresenca.color}`}>{statusPresenca.label}</span>
+                    
+                    <td className="p-4 hidden md:table-cell align-middle">
+                        <div className="text-sm text-slate-700 font-medium">{aluno.plano_tipo || 'Não definido'}</div>
+                        {aluno.plano_tipo !== 'Todos os dias' && aluno.plano_dias && (
+                             <div className="text-xs text-slate-500 mt-1 flex gap-1 flex-wrap">
+                                {aluno.plano_dias.map(d => (
+                                    <span key={d} className="bg-slate-100 border px-1 rounded">{d.substring(0,3)}</span>
+                                ))}
+                             </div>
+                        )}
                     </td>
-                    <td className="p-4 text-right">
-                      <div className="flex justify-end gap-2" onClick={e => e.stopPropagation()}>
-                        
-                        {/* NOVO BOTÃO DE CARTEIRINHA AQUI */}
-                        <button 
-                          onClick={() => setShowQRCode(aluno)} 
-                          className="p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-800 rounded" 
-                          title="Carteirinha / QR Code"
-                        >
-                          <QrCode size={18} />
-                        </button>
 
-                        <button onClick={(e) => handleCheckIn(e, aluno.id, aluno.nome)} className="p-2 text-green-600 hover:bg-green-50 rounded" title="Presença"><CalendarCheck size={18} /></button>
-                        <button onClick={() => { setFormData(aluno); setEditMode(true); setViewState('form'); }} className="p-2 text-blue-600 hover:bg-blue-50 rounded"><Edit size={18} /></button>
-                        <button onClick={() => handleDelete(aluno.id)} className="p-2 text-red-600 hover:bg-red-50 rounded"><Trash2 size={18} /></button>
+                    <td className="p-4 text-center align-middle">
+                        {aluno.pago_mes_atual ? (
+                            <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-green-100 text-green-700 text-xs font-bold">
+                                <CheckCircle size={14} /> Pago
+                            </span>
+                        ) : (
+                            <div className="flex items-center justify-center gap-2">
+                                <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-red-100 text-red-700 text-xs font-bold">
+                                    <XCircle size={14} /> Pendente
+                                </span>
+                                <button 
+                                    onClick={(e) => handleConfirmarPagamento(e, aluno)}
+                                    className="p-1.5 bg-green-600 text-white rounded hover:bg-green-700 shadow-sm transition-transform hover:scale-105"
+                                    title="Pagar Mensalidade Agora"
+                                >
+                                    <span className="font-bold text-xs">R$</span>
+                                </button>
+                            </div>
+                        )}
+                    </td>
+
+                    <td className="p-4 text-right align-middle">
+                      <div className="flex justify-end gap-2">
+                        {/* BOTÃO DE QR CODE REMOVIDO DAQUI */}
+                        <button onClick={() => { setFormData(aluno); setEditMode(true); setViewState('form'); }} className="p-2 text-blue-600 hover:bg-blue-50 rounded" title="Editar Cadastro"><Edit size={18} /></button>
+                        <button onClick={() => handleDelete(aluno.id)} className="p-2 text-red-600 hover:bg-red-50 rounded" title="Excluir Aluno"><Trash2 size={18} /></button>
                       </div>
                     </td>
                   </tr>
-                );
-              })}
+                ))
+              )}
             </tbody>
           </table>
-        </div>
-      )}
-      
-      {/* MODAL QR CODE (SEPARADO) */}
-      {showQRCode && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-[60]" onClick={() => setShowQRCode(null)}>
-            <div className="bg-white rounded-2xl flex flex-col items-center max-w-sm w-full overflow-hidden shadow-2xl" onClick={e => e.stopPropagation()}>
-                <div className="bg-slate-900 w-full p-6 text-center">
-                    <h3 className="text-xl font-bold text-white tracking-widest">BJJ COLLEGE</h3>
-                    <p className="text-slate-400 text-xs uppercase tracking-wide mt-1">Carteira do Atleta</p>
-                </div>
-                <div className="p-8 flex flex-col items-center w-full bg-white relative">
-                    <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-blue-500 to-purple-600"></div>
-                    <div className="w-24 h-24 rounded-full border-4 border-white shadow-lg overflow-hidden -mt-16 mb-4 bg-slate-200 z-10">
-                    {showQRCode.foto_url ? (
-                        <img src={showQRCode.foto_url} alt={showQRCode.nome} className="w-full h-full object-cover" />
-                    ) : (
-                        <div className="w-full h-full flex items-center justify-center bg-slate-300 text-slate-500">
-                        <User size={40} />
-                        </div>
-                    )}
-                    </div>
-                    <h2 className="text-2xl font-bold text-slate-800 text-center leading-tight">{showQRCode.nome}</h2>
-                    <span className="px-3 py-1 bg-slate-100 rounded-full text-sm font-semibold text-slate-600 mt-2 mb-6 border border-slate-200">
-                    {showQRCode.graduacao}
-                    </span>
-                    <div className="p-2 bg-white border-2 border-slate-900 rounded-lg">
-                    <QRCode
-                        value={showQRCode.id}
-                        size={180}
-                        style={{ height: "auto", maxWidth: "100%", width: "100%" }}
-                        viewBox={`0 0 256 256`}
-                    />
-                    </div>
-                    <p className="text-xs text-slate-400 mt-2 font-mono">{showQRCode.id.slice(0, 8)}...</p>
-                </div>
-                <div className="bg-slate-50 w-full p-4 flex gap-2 border-t border-slate-100">
-                <button onClick={() => window.print()} className="flex-1 py-2 bg-slate-900 text-white rounded-lg font-bold hover:bg-slate-800 flex items-center justify-center gap-2">
-                    <Download size={18} /> Salvar
-                </button>
-                <button onClick={() => setShowQRCode(null)} className="px-4 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg font-bold hover:bg-slate-50">
-                    Fechar
-                </button>
-                </div>
-            </div>
         </div>
       )}
     </div>

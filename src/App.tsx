@@ -8,9 +8,9 @@ import Alunos from './components/Alunos';
 import Financeiro from './components/Financeiro';
 import Cantina from './components/Cantina';
 import Configuracoes from './components/Configuracoes';
-import Totem from './components/Totem';
-import Presencas from './components/Presencas';
 import DevPanel from './components/DevPanel'; // Importação necessária
+import Instrutores from './components/Instrutores';
+import Relatorios from './components/Relatorios';
 
 import SecurityGuard, { SECURITY_KEY } from './components/SecurityGuard';
 import AccessDenied from './components/AccessDenied';
@@ -53,14 +53,13 @@ function AppContent() {
   return (
     <Layout currentPage={currentPage} onNavigate={setCurrentPage}>
       {currentPage === 'dashboard' && <Dashboard />}
-      {currentPage === 'totem' && <Totem />}
-      {currentPage === 'presencas' && <Presencas />}
+      {currentPage === 'relatorios' && <Relatorios />}
       {currentPage === 'alunos' && <Alunos />}
       {currentPage === 'financeiro' && <Financeiro />}
       {currentPage === 'cantina' && <Cantina />}
       {currentPage === 'configuracoes' && <Configuracoes />}
-      {/* ESTA LINHA ESTAVA FALTANDO: */}
       {currentPage === 'dev' && <DevPanel />}
+      {currentPage === 'instrutores' && <Instrutores />} {/* Nova rota para Instrutores */}
     </Layout>
   );
 }

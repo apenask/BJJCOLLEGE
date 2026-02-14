@@ -1,382 +1,228 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Users, TrendingUp, TrendingDown, DollarSign, Activity, HandCoins, BarChart3, Calendar } from 'lucide-react';
-import { format, subMonths, startOfMonth, startOfYear, differenceInMonths } from 'date-fns';
+import { 
+  TrendingUp, 
+  TrendingDown, 
+  Wallet, 
+  Calendar,
+  HandCoins,
+  Users
+} from 'lucide-react';
+import { format, startOfMonth, endOfMonth } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { useToast } from '../contexts/ToastContext';
 
-export default function Dashboard() {
-  const { addToast } = useToast();
-  const [stats, setStats] = useState({
-    alunosAtivos: 0,
-    receitaMensal: 0,
-    despesasMensais: 0,
-    comissoes: 0,
-    lucro: 0
-  });
-  const [chartData, setChartData] = useState<any[]>([]);
+export default function Dashboard({ onNavigate }: { onNavigate: (page: string) => void }) {
   const [loading, setLoading] = useState(true);
-  const [periodo, setPeriodo] = useState('6'); // Estado para o filtro (Padrão: 6 meses)
+  const [stats, setStats] = useState({
+    receitaBruta: 0,
+    totalComissoes: 0,
+    despesas: 0,
+    saldoLiquido: 0,
+    totalAlunos: 0,
+    alunosAtivos: 0,
+    alunosInadimplentes: 0
+  });
 
   useEffect(() => {
     fetchDashboardData();
-
-    // Recriamos a subscrição quando o período muda para garantir que a função use o estado correto
-    const channel = supabase
-      .channel('dashboard_realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'alunos' }, () => fetchDashboardData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'vendas' }, () => fetchDashboardData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'transacoes' }, () => fetchDashboardData())
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [periodo]); // Dependência adicionada: recarrega se mudar o período
+  }, []);
 
   async function fetchDashboardData() {
     try {
+      setLoading(true);
       const hoje = new Date();
-      const primeiroDiaMesAtual = startOfMonth(hoje).toISOString();
-      
-      // Definição da Data de Início do Gráfico com base no filtro
-      let dataInicioGrafico;
-      let mesesParaMostrar;
+      const inicioMes = startOfMonth(hoje).toISOString();
+      const fimMes = endOfMonth(hoje).toISOString();
 
-      if (periodo === 'ytd') {
-        dataInicioGrafico = startOfYear(hoje).toISOString();
-        mesesParaMostrar = differenceInMonths(hoje, startOfYear(hoje));
-      } else {
-        const meses = parseInt(periodo) - 1; // -1 porque inclui o mês atual
-        dataInicioGrafico = startOfMonth(subMonths(hoje, meses)).toISOString();
-        mesesParaMostrar = meses;
-      }
-
-      // --- 1. DADOS DO MÊS ATUAL (KPIs - Sempre fixos no mês atual) ---
-      
-      const { count: alunosCount } = await supabase
-        .from('alunos')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'Ativo');
-
-      const { data: vendasMes } = await supabase
-        .from('vendas')
-        .select('total')
-        .gte('data', primeiroDiaMesAtual);
-      
-      const totalVendasMes = vendasMes?.reduce((acc, curr) => acc + Number(curr.total), 0) || 0;
-
-      const { data: transacoesMes } = await supabase
+      // 1. Buscar Transações do Mês (Receitas e Despesas)
+      const { data: transacoes } = await supabase
         .from('transacoes')
-        .select('valor, tipo, tipo_aula_id')
-        .gte('data', primeiroDiaMesAtual);
+        .select('*')
+        .gte('data', inicioMes)
+        .lte('data', fimMes);
 
-      const { data: rateios } = await supabase.from('rateio_config').select('*');
+      // 2. Buscar Pagamentos REAIS feitos aos Instrutores neste mês
+      // AQUI MUDOU: Não calculamos mais, buscamos o que foi pago de fato.
+      const { data: pagamentosInstrutores } = await supabase
+        .from('pagamentos_instrutores')
+        .select('valor_pago')
+        .eq('mes_referencia', hoje.toISOString().slice(0, 7)); // Ex: '2023-10'
 
-      let receitaTransacoesMes = 0;
-      let despesasMes = 0;
-      let totalComissoesMes = 0;
+      // 3. Buscar Alunos
+      const { data: alunos } = await supabase.from('alunos').select('*');
 
-      transacoesMes?.forEach((t: any) => {
-        const valor = Number(t.valor);
+      // --- CÁLCULOS FINANCEIROS ---
+      let receita = 0;
+      let despesas = 0;
+      
+      // Soma o que foi pago aos instrutores
+      const totalComissoesPagas = pagamentosInstrutores?.reduce((acc, p) => acc + Number(p.valor_pago), 0) || 0;
+
+      transacoes?.forEach(t => {
         if (t.tipo === 'Receita') {
-          receitaTransacoesMes += valor;
-          if (t.tipo_aula_id && rateios) {
-            const regras = rateios.filter((r: any) => r.tipo_aula_id === t.tipo_aula_id);
-            regras.forEach((r: any) => {
-              totalComissoesMes += valor * (Number(r.percentual) / 100);
-            });
-          }
+            receita += Number(t.valor);
         } else {
-          despesasMes += valor;
+            despesas += Number(t.valor);
         }
       });
 
-      const receitaTotalMes = totalVendasMes + receitaTransacoesMes;
-      const lucroLiquidoMes = receitaTotalMes - despesasMes - totalComissoesMes;
+      // --- CÁLCULOS ALUNOS ---
+      const total = alunos?.length || 0;
+      const ativos = alunos?.filter(a => a.status === 'Ativo').length || 0;
+      
+      const pagantesIds = new Set(transacoes?.filter(t => t.tipo === 'Receita' && t.aluno_id).map(t => t.aluno_id));
+      const inadimplentes = alunos?.filter(a => a.status === 'Ativo' && !pagantesIds.has(a.id) && !a.bolsista_jiujitsu && !a.bolsista_musculacao).length || 0;
 
       setStats({
-        alunosAtivos: alunosCount || 0,
-        receitaMensal: receitaTotalMes,
-        despesasMensais: despesasMes,
-        comissoes: totalComissoesMes,
-        lucro: lucroLiquidoMes
+        receitaBruta: receita,
+        totalComissoes: totalComissoesPagas, // Agora reflete apenas o pago
+        despesas: despesas,
+        // Saldo = Receita - Despesas Gerais - Comissões Pagas
+        saldoLiquido: receita - despesas - totalComissoesPagas,
+        totalAlunos: total,
+        alunosAtivos: ativos,
+        alunosInadimplentes: inadimplentes
       });
-
-      // --- 2. DADOS HISTÓRICOS (GRÁFICO - Dinâmico) ---
-      
-      const { data: histTransacoes } = await supabase
-        .from('transacoes')
-        .select('valor, tipo, data')
-        .gte('data', dataInicioGrafico);
-        
-      const { data: histVendas } = await supabase
-        .from('vendas')
-        .select('total, data')
-        .gte('data', dataInicioGrafico);
-
-      // Agrupar dados por mês
-      const monthlyStats = new Map();
-      
-      // Inicializar os meses vazios para o período selecionado
-      for (let i = mesesParaMostrar; i >= 0; i--) {
-        const d = subMonths(hoje, i);
-        const key = format(d, 'yyyy-MM');
-        monthlyStats.set(key, { 
-          label: format(d, 'MMM', { locale: ptBR }).toUpperCase(),
-          receita: 0, 
-          despesa: 0 
-        });
-      }
-
-      // Preencher com Transações
-      histTransacoes?.forEach((t: any) => {
-        const dateKey = t.data.substring(0, 7); // yyyy-MM
-        if (monthlyStats.has(dateKey)) {
-          const entry = monthlyStats.get(dateKey);
-          if (t.tipo === 'Receita') entry.receita += Number(t.valor);
-          else entry.despesa += Number(t.valor);
-        }
-      });
-
-      // Preencher com Vendas da Loja
-      histVendas?.forEach((v: any) => {
-        const dataVenda = new Date(v.data);
-        const dateKey = format(dataVenda, 'yyyy-MM');
-        if (monthlyStats.has(dateKey)) {
-          const entry = monthlyStats.get(dateKey);
-          entry.receita += Number(v.total);
-        }
-      });
-
-      setChartData(Array.from(monthlyStats.values()));
 
     } catch (error) {
       console.error('Erro dashboard:', error);
-      addToast('Erro ao atualizar painel.', 'error');
     } finally {
       setLoading(false);
     }
   }
 
-  function formatMoney(value: number) {
-    return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-  }
+  // Componente Card
+  const Card = ({ title, value, icon: Icon, color, subtext }: any) => {
+    const bgClass = color.includes('600') 
+        ? color.replace('text-', 'bg-').replace('600', '100') 
+        : color.replace('text-', 'bg-').replace('500', '100');
 
-  const margemLucro = stats.receitaMensal > 0 
-    ? ((stats.lucro / stats.receitaMensal) * 100).toFixed(0) 
-    : '0';
+    return (
+        <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex items-start justify-between relative overflow-hidden group hover:shadow-md transition-all">
+        <div className={`absolute -right-6 -top-6 opacity-5 p-4 rounded-full ${color.replace('text-', 'bg-')} transition-transform group-hover:scale-110`}>
+            <Icon size={100} />
+        </div>
+        <div>
+            <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-2">{title}</p>
+            <h3 className={`text-2xl sm:text-3xl font-bold ${color}`}>{value}</h3>
+            {subtext && <p className="text-xs text-slate-400 mt-1">{subtext}</p>}
+        </div>
+        <div className={`p-3 rounded-xl ${bgClass} ${color}`}>
+            <Icon size={24} />
+        </div>
+        </div>
+    );
+  };
 
-  if (loading) {
-    return <div className="p-8 text-center text-slate-500 animate-pulse">A carregar dados...</div>;
-  }
+  // Gráfico Pizza
+  const GraficoPizza = () => {
+      const total = stats.receitaBruta || 1; 
+      
+      const pDespesas = (stats.despesas / total) * 100;
+      const pComissoes = (stats.totalComissoes / total) * 100;
+      // Lucro é o que sobra
+      const pLucro = ((stats.receitaBruta - stats.despesas - stats.totalComissoes) / total) * 100;
+      const safeLucro = pLucro > 0 ? pLucro : 0;
+      
+      const degDespesas = (pDespesas * 3.6);
+      const degComissoes = degDespesas + (pComissoes * 3.6);
+      
+      return (
+          <div className="flex flex-col sm:flex-row items-center gap-8 justify-center h-full">
+              <div 
+                className="w-48 h-48 rounded-full shadow-inner relative flex items-center justify-center border-4 border-white shadow-slate-200"
+                style={{
+                    background: `conic-gradient(
+                        #ef4444 0deg ${degDespesas}deg, 
+                        #f97316 ${degDespesas}deg ${degComissoes}deg, 
+                        #2563eb ${degComissoes}deg 360deg
+                    )`
+                }}
+              >
+                  <div className="w-32 h-32 bg-white rounded-full flex flex-col items-center justify-center shadow-sm">
+                        <span className="text-xs text-slate-400 uppercase font-bold">Entradas</span>
+                        <span className="text-xl font-bold text-slate-800">R$ {stats.receitaBruta.toFixed(0)}</span>
+                  </div>
+              </div>
 
-  const maxChartValue = Math.max(
-    ...chartData.map(d => Math.max(d.receita, d.despesa)), 
-    100
-  );
+              <div className="space-y-4 w-full max-w-xs">
+                  <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                          <div className="w-3 h-3 rounded-full bg-blue-600"></div>
+                          <span className="text-sm font-medium text-slate-600">Saldo Líquido</span>
+                      </div>
+                      <span className="text-sm font-bold text-slate-800">{safeLucro.toFixed(1)}%</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                          <div className="w-3 h-3 rounded-full bg-orange-500"></div>
+                          <span className="text-sm font-medium text-slate-600">Comissões Pagas</span>
+                      </div>
+                      <span className="text-sm font-bold text-slate-800">{pComissoes.toFixed(1)}%</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                          <div className="w-3 h-3 rounded-full bg-red-500"></div>
+                          <span className="text-sm font-medium text-slate-600">Despesas</span>
+                      </div>
+                      <span className="text-sm font-bold text-slate-800">{pDespesas.toFixed(1)}%</span>
+                  </div>
+              </div>
+          </div>
+      );
+  };
+
+  if (loading) return <div className="p-8 text-center text-slate-400 animate-pulse">Carregando painel...</div>;
 
   return (
-    <div className="space-y-6 animate-fadeIn pb-10">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h2 className="text-2xl font-bold text-slate-800">Painel Geral</h2>
-          <span className="text-sm text-slate-500 bg-slate-100 px-3 py-1 rounded-full capitalize">
-            {format(new Date(), "MMMM 'de' yyyy", { locale: ptBR })}
-          </span>
-        </div>
+    <div className="space-y-6 animate-fadeIn pb-20">
+      <div>
+          <h2 className="text-2xl font-bold text-slate-800">Visão Geral</h2>
+          <p className="text-slate-500 text-sm flex items-center gap-1">
+            <Calendar size={14}/> {format(new Date(), "MMMM 'de' yyyy", { locale: ptBR })}
+          </p>
       </div>
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-        
-        {/* Receita */}
-        <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100 relative overflow-hidden group">
-          <div className="absolute right-0 top-0 h-full w-1 bg-green-500"></div>
-          <div className="flex justify-between items-start mb-2">
-            <div>
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Receita Bruta</p>
-              <h3 className="text-xl font-bold text-green-700 mt-1">{formatMoney(stats.receitaMensal)}</h3>
-            </div>
-            <div className="p-2 bg-green-50 rounded-lg text-green-600">
-              <TrendingUp size={20} />
-            </div>
-          </div>
-        </div>
-
-        {/* Despesas */}
-        <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100 relative overflow-hidden">
-          <div className="absolute right-0 top-0 h-full w-1 bg-red-500"></div>
-          <div className="flex justify-between items-start mb-2">
-            <div>
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Despesas</p>
-              <h3 className="text-xl font-bold text-red-700 mt-1">{formatMoney(stats.despesasMensais)}</h3>
-            </div>
-            <div className="p-2 bg-red-50 rounded-lg text-red-600">
-              <TrendingDown size={20} />
-            </div>
-          </div>
-        </div>
-
-        {/* Comissões */}
-        <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100 relative overflow-hidden">
-          <div className="absolute right-0 top-0 h-full w-1 bg-orange-500"></div>
-          <div className="flex justify-between items-start mb-2">
-            <div>
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Instrutores</p>
-              <h3 className="text-xl font-bold text-orange-700 mt-1">{formatMoney(stats.comissoes)}</h3>
-            </div>
-            <div className="p-2 bg-orange-50 rounded-lg text-orange-600">
-              <HandCoins size={20} />
-            </div>
-          </div>
-        </div>
-
-        {/* Lucro */}
-        <div className={`bg-white p-5 rounded-xl shadow-sm border border-slate-100 relative overflow-hidden`}>
-          <div className={`absolute right-0 top-0 h-full w-1 ${stats.lucro >= 0 ? 'bg-blue-600' : 'bg-red-600'}`}></div>
-          <div className="flex justify-between items-start mb-2">
-            <div>
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Lucro Real</p>
-              <h3 className={`text-xl font-bold mt-1 ${stats.lucro >= 0 ? 'text-blue-700' : 'text-red-700'}`}>
-                {formatMoney(stats.lucro)}
-              </h3>
-            </div>
-            <div className="p-2 bg-blue-50 rounded-lg text-blue-600">
-              <DollarSign size={20} />
-            </div>
-          </div>
-        </div>
-
-        {/* Alunos */}
-        <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100 relative overflow-hidden">
-          <div className="absolute right-0 top-0 h-full w-1 bg-purple-500"></div>
-          <div className="flex justify-between items-start mb-2">
-            <div>
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Alunos Ativos</p>
-              <h3 className="text-xl font-bold text-purple-700 mt-1">{stats.alunosAtivos}</h3>
-            </div>
-            <div className="p-2 bg-purple-50 rounded-lg text-purple-600">
-              <Users size={20} />
-            </div>
-          </div>
-        </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card title="Receita Bruta" value={`R$ ${stats.receitaBruta.toFixed(2)}`} icon={TrendingUp} color="text-green-600" subtext="Total recebido" />
+        <Card title="Comissões Pagas" value={`R$ ${stats.totalComissoes.toFixed(2)}`} icon={HandCoins} color="text-orange-600" subtext="Repasse efetivado" />
+        <Card title="Despesas" value={`R$ ${stats.despesas.toFixed(2)}`} icon={TrendingDown} color="text-red-600" subtext="Custos operacionais" />
+        <Card title="Saldo Líquido" value={`R$ ${stats.saldoLiquido.toFixed(2)}`} icon={Wallet} color={stats.saldoLiquido >= 0 ? "text-blue-600" : "text-red-600"} subtext="Lucro Real (Livre)" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* GRÁFICO DE FLUXO DE CAIXA */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 lg:col-span-2">
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
-            <h4 className="font-bold text-slate-800 flex items-center gap-2">
-              <BarChart3 size={20} className="text-blue-600" />
-              Fluxo de Caixa
-            </h4>
-            
-            {/* SELETOR DE PERÍODO */}
-            <div className="flex items-center gap-2 bg-slate-50 p-1 rounded-lg border border-slate-200">
-              <Calendar size={14} className="text-slate-400 ml-2" />
-              <select
-                value={periodo}
-                onChange={(e) => setPeriodo(e.target.value)}
-                className="text-sm bg-transparent border-none focus:ring-0 text-slate-600 font-medium py-1 pr-8 cursor-pointer outline-none"
-              >
-                <option value="3">Últimos 3 meses</option>
-                <option value="6">Últimos 6 meses</option>
-                <option value="12">Últimos 12 meses</option>
-                <option value="ytd">Ano Atual (YTD)</option>
-              </select>
-            </div>
+          <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
+              <h3 className="font-bold text-slate-800 mb-6">Distribuição Financeira</h3>
+              {stats.receitaBruta > 0 ? (<GraficoPizza />) : (<div className="h-48 flex items-center justify-center text-slate-400 text-sm bg-slate-50 rounded-xl">Sem dados financeiros suficientes.</div>)}
           </div>
 
-          {/* Área do Gráfico */}
-          <div className="h-64 w-full flex items-end justify-between gap-2 sm:gap-4 overflow-x-auto pb-2">
-            {chartData.map((data, index) => (
-              <div key={index} className="flex flex-col items-center justify-end h-full flex-1 group relative min-w-[30px]">
-                
-                {/* Barras Container */}
-                <div className="flex gap-1 items-end justify-center w-full h-full">
-                  {/* Barra Receita */}
-                  <div 
-                    className="w-2 sm:w-5 bg-green-500 rounded-t-sm transition-all duration-500 relative hover:bg-green-400 cursor-pointer"
-                    style={{ height: `${(data.receita / maxChartValue) * 100}%` }}
-                  >
-                    {/* Tooltip */}
-                    <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10 pointer-events-none shadow-lg">
-                      Rec: {formatMoney(data.receita)}
+          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6 flex flex-col">
+                <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2"><Users className="text-slate-900"/> Resumo Alunos</h3>
+                <div className="flex-1 space-y-8">
+                    <div>
+                        <div className="flex justify-between items-end mb-2">
+                            <span className="text-sm font-medium text-slate-500">Total Matriculados</span>
+                            <span className="text-2xl font-bold text-slate-800">{stats.totalAlunos}</span>
+                        </div>
+                        <div className="w-full bg-slate-100 h-2 rounded-full"><div className="bg-slate-800 h-full rounded-full" style={{ width: '100%' }}></div></div>
                     </div>
-                  </div>
-
-                  {/* Barra Despesa */}
-                  <div 
-                    className="w-2 sm:w-5 bg-red-500 rounded-t-sm transition-all duration-500 relative hover:bg-red-400 cursor-pointer"
-                    style={{ height: `${(data.despesa / maxChartValue) * 100}%` }}
-                  >
-                    <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10 pointer-events-none shadow-lg">
-                      Desp: {formatMoney(data.despesa)}
+                    <div>
+                        <div className="flex justify-between items-end mb-2">
+                            <span className="text-sm font-medium text-green-600">Pagamento em Dia</span>
+                            <span className="text-xl font-bold text-green-700">{stats.totalAlunos > 0 ? ((stats.alunosAtivos - stats.alunosInadimplentes) / stats.totalAlunos * 100).toFixed(0) : 0}%</span>
+                        </div>
+                        <div className="w-full bg-green-100 h-2 rounded-full"><div className="bg-green-500 h-full rounded-full" style={{ width: `${stats.totalAlunos > 0 ? ((stats.alunosAtivos - stats.alunosInadimplentes) / stats.totalAlunos * 100) : 0}%` }}></div></div>
                     </div>
-                  </div>
+                    <div>
+                        <div className="flex justify-between items-end mb-2">
+                            <span className="text-sm font-medium text-red-600">Pendentes</span>
+                            <span className="text-xl font-bold text-red-700">{stats.totalAlunos > 0 ? (stats.alunosInadimplentes / stats.totalAlunos * 100).toFixed(0) : 0}%</span>
+                        </div>
+                        <div className="w-full bg-red-100 h-2 rounded-full"><div className="bg-red-500 h-full rounded-full" style={{ width: `${stats.totalAlunos > 0 ? (stats.alunosInadimplentes / stats.totalAlunos * 100) : 0}%` }}></div></div>
+                        <p className="text-xs text-slate-400 mt-2 text-right">{stats.alunosInadimplentes} alunos pendentes</p>
+                    </div>
                 </div>
-
-                {/* Legenda do Mês */}
-                <span className="text-[10px] sm:text-xs font-semibold text-slate-500 mt-2 truncate w-full text-center">{data.label}</span>
-              </div>
-            ))}
           </div>
-          
-          <div className="flex justify-center gap-4 text-xs font-bold mt-4">
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-3 bg-green-500 rounded-sm"></div> Receitas
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-3 bg-red-500 rounded-sm"></div> Despesas
-            </div>
-          </div>
-        </div>
-
-        {/* Resumo Lateral */}
-        <div className="space-y-6">
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 h-full flex flex-col justify-center">
-            <h4 className="font-semibold text-slate-800 mb-6 flex items-center gap-2">
-              <Activity size={20} className="text-blue-600" /> 
-              Saúde Financeira
-            </h4>
-            
-            <div className="space-y-6">
-              <div>
-                <div className="flex justify-between text-sm mb-1">
-                  <span className="text-slate-500">Margem de Lucro</span>
-                  <span className={`font-bold ${Number(margemLucro) > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {margemLucro}%
-                  </span>
-                </div>
-                <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
-                  <div 
-                    className={`h-2 rounded-full ${Number(margemLucro) > 0 ? 'bg-green-500' : 'bg-red-500'}`} 
-                    style={{ width: `${Math.min(Math.abs(Number(margemLucro)), 100)}%` }}
-                  ></div>
-                </div>
-              </div>
-
-              <div className="pt-4 border-t border-slate-100">
-                <p className="text-sm text-slate-500 mb-2">Resumo do Mês</p>
-                <div className="flex justify-between items-center mb-2">
-                  <span className="text-xs font-bold text-slate-400 uppercase">Entradas</span>
-                  <span className="font-semibold text-green-700">{formatMoney(stats.receitaMensal)}</span>
-                </div>
-                <div className="flex justify-between items-center mb-2">
-                  <span className="text-xs font-bold text-slate-400 uppercase">Saídas (Total)</span>
-                  <span className="font-semibold text-red-700">{formatMoney(stats.despesasMensais + stats.comissoes)}</span>
-                </div>
-                <div className="flex justify-between items-center pt-2 border-t border-dashed">
-                  <span className="text-xs font-bold text-slate-800 uppercase">Resultado</span>
-                  <span className={`font-bold ${stats.lucro >= 0 ? 'text-blue-700' : 'text-red-700'}`}>
-                    {formatMoney(stats.lucro)}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   );
