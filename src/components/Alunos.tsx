@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { 
   Plus, Edit, Trash2, User, CheckCircle, 
   Brain, DollarSign, X, 
-  HeartPulse, Cake, Phone, ChevronLeft, Trophy, Medal, Zap, AlertTriangle
+  HeartPulse, Cake, Phone, ChevronLeft, Trophy, Medal, Zap, AlertTriangle, Droplet, ShoppingBag
 } from 'lucide-react';
 import { startOfMonth, endOfMonth } from 'date-fns';
 import { useToast } from '../contexts/ToastContext';
@@ -28,6 +28,7 @@ interface Aluno {
   bolsista_musculacao: boolean;
   atleta: boolean;
   pago_mes_atual?: boolean;
+  divida_loja?: number; // CAMPO NOVO
 }
 
 const DIAS_SEMANA = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
@@ -42,6 +43,9 @@ export default function Alunos() {
   const [viewState, setViewState] = useState<'list' | 'form' | 'details'>('list');
   const [searchTerm, setSearchTerm] = useState('');
   
+  // NOVO: Filtro para ver devedores
+  const [filtroDevedores, setFiltroDevedores] = useState(false);
+
   const [formData, setFormData] = useState<Partial<Aluno>>({ 
     plano_dias: [], 
     plano_tipo: 'Todos os dias',
@@ -55,7 +59,7 @@ export default function Alunos() {
 
   // Estados dos Modais
   const [customAlert, setCustomAlert] = useState({ show: false, id: '', nome: '' });
-  const [forceDeleteAlert, setForceDeleteAlert] = useState({ show: false, id: '', nome: '' }); // NOVO: Modal de Forçar Exclusão
+  const [forceDeleteAlert, setForceDeleteAlert] = useState({ show: false, id: '', nome: '' }); 
   
   const [pagamentoModal, setPagamentoModal] = useState<{ show: boolean, aluno: Aluno | null, valorTotal: number }>({ show: false, aluno: null, valorTotal: 0 });
   const [pagamentosParciais, setPagamentosParciais] = useState<{ metodo: string, valor: number }[]>([]);
@@ -69,6 +73,7 @@ export default function Alunos() {
       const inicioMes = startOfMonth(new Date()).toISOString();
       const fimMes = endOfMonth(new Date()).toISOString();
 
+      // 1. Verifica Mensalidades Pagas
       const { data: pagamentos } = await supabase
         .from('transacoes')
         .select('aluno_id')
@@ -79,9 +84,23 @@ export default function Alunos() {
 
       const pagantesSet = new Set(pagamentos?.map(p => p.aluno_id));
       
+      // 2. Verifica Dívidas da Loja (Transações 'Pendente' da categoria Loja)
+      const { data: dividas } = await supabase.from('transacoes')
+         .select('aluno_id, valor')
+         .eq('tipo', 'Pendente')
+         .eq('categoria', 'Venda Loja');
+
+      // Cria um mapa de ID -> Valor Total Dívida
+      const dividaMap = new Map();
+      dividas?.forEach(d => {
+          const atual = dividaMap.get(d.aluno_id) || 0;
+          dividaMap.set(d.aluno_id, atual + Number(d.valor));
+      });
+      
       const alunosProc = dadosAlunos?.map((aluno: any) => ({
         ...aluno,
-        pago_mes_atual: pagantesSet.has(aluno.id) || aluno.bolsista_jiujitsu || aluno.bolsista_musculacao
+        pago_mes_atual: pagantesSet.has(aluno.id) || aluno.bolsista_jiujitsu || aluno.bolsista_musculacao,
+        divida_loja: dividaMap.get(aluno.id) || 0
       }));
       setAlunos(alunosProc || []);
       
@@ -168,6 +187,7 @@ export default function Alunos() {
       try {
         const alunoData = { ...formData };
         delete (alunoData as any).pago_mes_atual; 
+        delete (alunoData as any).divida_loja; // Não salva campo calculado
 
         if (!alunoData.plano_tipo) alunoData.plano_tipo = 'Todos os dias';
         if (!alunoData.status) alunoData.status = 'Ativo';
@@ -190,10 +210,9 @@ export default function Alunos() {
     
     if (error) {
         console.error(error);
-        // Se der erro de chave estrangeira (histórico preso), abre o modal de FORÇAR
         if (error.code === '23503' || error.message.includes('foreign key')) {
-            setCustomAlert({ show: false, id: '', nome: '' }); // Fecha o normal
-            setForceDeleteAlert({ show: true, id: customAlert.id, nome: customAlert.nome }); // Abre o forçado
+            setCustomAlert({ show: false, id: '', nome: '' }); 
+            setForceDeleteAlert({ show: true, id: customAlert.id, nome: customAlert.nome }); 
         } else {
             addToast('Erro desconhecido ao excluir aluno.', 'error');
         }
@@ -208,18 +227,12 @@ export default function Alunos() {
     }
   }
 
-  // --- NOVA FUNÇÃO: FORÇAR EXCLUSÃO ---
+  // --- FUNÇÃO: FORÇAR EXCLUSÃO ---
   async function executarExclusaoForcada() {
       try {
           const id = forceDeleteAlert.id;
-          
-          // 1. Apaga Transações vinculadas
           await supabase.from('transacoes').delete().eq('aluno_id', id);
-          
-          // 2. Apaga Vendas vinculadas (se houver)
           await supabase.from('vendas').delete().eq('aluno_id', id);
-          
-          // 3. Tenta apagar o aluno de novo
           const { error } = await supabase.from('alunos').delete().eq('id', id);
 
           if (error) throw error;
@@ -244,10 +257,17 @@ export default function Alunos() {
     else setFormData({ ...formData, plano_dias: [...diasAtuais, dia] });
   };
 
-  const filteredAlunos = alunos.filter(aluno => 
-    (aluno.categoria === tabAtual || (!aluno.categoria && tabAtual === 'Adulto')) &&
-    aluno.nome.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredAlunos = alunos.filter(aluno => {
+    const matchCategoria = (aluno.categoria === tabAtual || (!aluno.categoria && tabAtual === 'Adulto'));
+    const matchBusca = aluno.nome.toLowerCase().includes(searchTerm.toLowerCase());
+    
+    // FILTRO DE INADIMPLENTES (Mensalidade Atrasada OU Dívida na Loja)
+    if (filtroDevedores) {
+        return matchBusca && (!aluno.pago_mes_atual || (aluno.divida_loja || 0) > 0);
+    }
+    
+    return matchCategoria && matchBusca;
+  });
 
   function handleNovoAluno() {
     setFormData({
@@ -299,23 +319,36 @@ export default function Alunos() {
 
                         <div className="w-full p-4 rounded-3xl border border-slate-100 bg-slate-50 mb-4 text-left">
                             <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Situação Financeira</p>
-                            <div className="flex items-center justify-between">
+                            <div className="flex flex-col gap-3">
                                 {a.pago_mes_atual ? (
                                     <div className="flex items-center gap-2 text-green-600 font-black uppercase text-sm">
                                         <CheckCircle size={20}/> Mensalidade em Dia
                                     </div>
                                 ) : (
-                                    <>
+                                    <div className="flex justify-between items-center">
                                         <div className="flex items-center gap-2 text-red-500 font-black uppercase text-sm">
                                             <X size={20}/> Pagamento Pendente
                                         </div>
                                         <button 
                                             onClick={() => abrirModalPagamento(a)}
-                                            className="bg-green-500 text-white p-3 rounded-2xl shadow-lg shadow-green-200 hover:scale-110 transition-all"
+                                            className="bg-green-500 text-white p-2 rounded-xl shadow-lg hover:bg-green-600 transition-all"
                                         >
-                                            <DollarSign size={20}/>
+                                            <DollarSign size={16}/>
                                         </button>
-                                    </>
+                                    </div>
+                                )}
+
+                                {/* CARD VERMELHO DE DÍVIDA NA LOJA (NOVO) */}
+                                {(a.divida_loja || 0) > 0 && (
+                                    <div className="bg-red-50 border border-red-100 p-4 rounded-2xl flex items-center justify-between animate-pulse">
+                                        <div className="flex items-center gap-3 text-red-600">
+                                            <div className="p-2 bg-white rounded-lg shadow-sm"><ShoppingBag size={18}/></div>
+                                            <div>
+                                                <p className="text-[10px] font-bold uppercase tracking-wider">Deve na Loja</p>
+                                                <p className="text-lg font-black leading-none">R$ {a.divida_loja?.toFixed(2)}</p>
+                                            </div>
+                                        </div>
+                                    </div>
                                 )}
                             </div>
                         </div>
@@ -371,7 +404,7 @@ export default function Alunos() {
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
                             <div className="space-y-6">
                                 <div className="flex items-center gap-4">
-                                    <div className="p-4 bg-red-100 text-red-600 rounded-3xl"><Plus size={24} className="rotate-45"/></div>
+                                    <div className="p-4 bg-red-100 text-red-600 rounded-3xl"><Droplet size={24}/></div> {/* ÍCONE CORRIGIDO AQUI */}
                                     <div>
                                         <p className="text-[10px] font-black text-slate-400 uppercase">Tipo Sanguíneo</p>
                                         <p className="text-2xl font-black text-red-600 italic">{a.tipo_sanguineo || 'N/A'}</p>
@@ -522,8 +555,17 @@ export default function Alunos() {
           <button onClick={handleNovoAluno} className="bg-slate-900 text-white px-6 py-3 rounded-2xl flex items-center gap-2 hover:bg-black shadow-lg transition-all font-bold text-sm w-full sm:w-auto justify-center"><Plus size={20}/> NOVO ALUNO</button>
       </div>
       
-      <div className="flex bg-slate-200 p-1 rounded-2xl gap-1 overflow-x-auto">
-          {['Adulto', 'Infantil', 'Kids'].map(c => (<button key={c} onClick={()=>setTabAtual(c as any)} className={`flex-1 px-6 py-3 rounded-xl font-bold text-sm transition-all ${tabAtual===c?'bg-white text-blue-600 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>{c}</button>))}
+      {/* ABAS DE CATEGORIA + BOTÃO DE FILTRO DE DEVEDORES */}
+      <div className="flex gap-2 flex-wrap">
+          <div className="flex bg-slate-200 p-1 rounded-2xl gap-1 overflow-x-auto flex-1">
+              {['Adulto', 'Infantil', 'Kids'].map(c => (<button key={c} onClick={()=>{setTabAtual(c as any); setFiltroDevedores(false);}} className={`flex-1 px-6 py-3 rounded-xl font-bold text-sm transition-all ${tabAtual===c && !filtroDevedores ? 'bg-white text-blue-600 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>{c}</button>))}
+          </div>
+          <button 
+            onClick={() => setFiltroDevedores(!filtroDevedores)} 
+            className={`px-6 py-3 rounded-2xl font-bold text-sm flex items-center gap-2 transition-all ${filtroDevedores ? 'bg-red-600 text-white shadow-lg' : 'bg-red-50 text-red-600 border border-red-100'}`}
+          >
+            <AlertTriangle size={18} /> Inadimplentes
+          </button>
       </div>
 
       <div className="bg-white rounded-[2rem] shadow-sm overflow-hidden border border-slate-100">
@@ -551,6 +593,7 @@ export default function Alunos() {
                                   <div className="flex gap-2 mt-1">
                                       <span className="text-[10px] font-black uppercase text-slate-400 bg-slate-100 px-2 py-0.5 rounded">{aluno.graduacao}</span>
                                       {(aluno.bolsista_jiujitsu || aluno.bolsista_musculacao) && <span className="text-[10px] font-black uppercase bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded">Bolsista</span>}
+                                      {(aluno.divida_loja || 0) > 0 && <span className="text-[10px] font-black uppercase bg-red-100 text-red-600 px-2 py-0.5 rounded">Deve Loja</span>}
                                   </div>
                               </div>
                           </div>
