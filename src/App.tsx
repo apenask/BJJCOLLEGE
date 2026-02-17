@@ -8,7 +8,7 @@ import Alunos from './components/Alunos';
 import Financeiro from './components/Financeiro';
 import Loja from './components/Loja';
 import Configuracoes from './components/Configuracoes';
-import DevPanel from './components/DevPanel'; // Importação necessária
+import DevPanel from './components/DevPanel'; 
 import Instrutores from './components/Instrutores';
 import Relatorios from './components/Relatorios';
 
@@ -18,7 +18,12 @@ import LiberarAcesso from './components/LiberarAcesso';
 
 function AppContent() {
   const { user, loading } = useAuth();
-  const [currentPage, setCurrentPage] = useState('dashboard');
+  
+  // 1. MUDANÇA: Inicializa lendo do localStorage, se não tiver nada, vai pro dashboard
+  const [currentPage, setCurrentPage] = useState(() => {
+    return localStorage.getItem('bjj_last_page') || 'dashboard';
+  });
+
   const [isAuthorizedDevice, setIsAuthorizedDevice] = useState(false);
   const [checkingDevice, setCheckingDevice] = useState(true);
 
@@ -29,6 +34,11 @@ function AppContent() {
     }
     setCheckingDevice(false);
   }, []);
+
+  // 2. MUDANÇA: Sempre que mudar de página, salva no localStorage
+  useEffect(() => {
+    localStorage.setItem('bjj_last_page', currentPage);
+  }, [currentPage]);
 
   if (window.location.pathname === '/liberar-acesso') {
     return <LiberarAcesso />;
@@ -59,7 +69,7 @@ function AppContent() {
       {currentPage === 'loja' && <Loja />}
       {currentPage === 'configuracoes' && <Configuracoes />}
       {currentPage === 'dev' && <DevPanel />}
-      {currentPage === 'instrutores' && <Instrutores />} {/* Nova rota para Instrutores */}
+      {currentPage === 'instrutores' && <Instrutores />}
     </Layout>
   );
 }
