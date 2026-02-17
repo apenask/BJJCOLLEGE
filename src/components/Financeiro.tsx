@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Plus, TrendingUp, TrendingDown, DollarSign, Calendar, Trash2, Edit, X, Banknote, QrCode, CreditCard, CheckCircle } from 'lucide-react';
+import { Plus, TrendingUp, TrendingDown, DollarSign, Calendar, Trash2, Edit, X, Banknote, QrCode, CreditCard, CheckCircle, Search } from 'lucide-react';
 import { format } from 'date-fns';
 import { useToast } from '../contexts/ToastContext';
 
@@ -26,6 +26,7 @@ export default function Financeiro() {
   const [transacoes, setTransacoes] = useState<Transacao[]>([]);
   const [loading, setLoading] = useState(true);
   const [filtroTurma, setFiltroTurma] = useState<'Geral' | 'Adulto' | 'Infantil' | 'Kids' | 'Loja'>('Geral');
+  const [searchTerm, setSearchTerm] = useState(''); // NOVO: Busca por texto
   
   const [showForm, setShowForm] = useState(false);
 
@@ -47,7 +48,7 @@ export default function Financeiro() {
     data: new Date().toISOString().split('T')[0],
   });
 
-  // NOVO: Estado para gerenciar múltiplos métodos de pagamento no formulário
+  // Estado para gerenciar múltiplos métodos de pagamento no formulário
   const [itensPagamento, setItensPagamento] = useState<ItemPagamento[]>([
     { metodo: 'Dinheiro', valor: '' }
   ]);
@@ -65,10 +66,18 @@ export default function Financeiro() {
 
   // --- LÓGICA DE FILTRO E SOMA DETALHADA ---
   const transacoesFiltradas = transacoes.filter(t => {
-    if (filtroTurma === 'Geral') return true;
-    if (filtroTurma === 'Loja') return t.categoria === 'Venda Loja';
-    if (t.tipo === 'Receita' && t.alunos) return t.alunos.categoria === filtroTurma;
-    return false;
+    // 1. Filtro por Turma
+    let matchTurma = false;
+    if (filtroTurma === 'Geral') matchTurma = true;
+    else if (filtroTurma === 'Loja') matchTurma = t.categoria === 'Venda Loja';
+    else if (t.tipo === 'Receita' && t.alunos) matchTurma = t.alunos.categoria === filtroTurma;
+    
+    // 2. Filtro por Texto (Nome ou Descrição) - NOVO
+    const termo = searchTerm.toLowerCase();
+    const matchBusca = t.descricao.toLowerCase().includes(termo) || 
+                       (t.alunos?.nome || '').toLowerCase().includes(termo);
+
+    return matchTurma && matchBusca;
   });
 
   const detalhamento = transacoesFiltradas.reduce((acc, t) => {
@@ -256,14 +265,26 @@ export default function Financeiro() {
 
   return (
     <div className="space-y-6 animate-fadeIn pb-20">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
           <h2 className="text-2xl font-bold text-slate-800">Financeiro</h2>
-          <button onClick={handleNovoLancamento} className="bg-slate-900 text-white px-4 py-2 rounded-lg flex gap-2 hover:bg-slate-800 shadow-sm">
-              <Plus size={20} /> Novo Lançamento
-          </button>
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+             {/* CAMPO DE BUSCA NOVO */}
+             <div className="relative flex-1 sm:flex-none">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                <input 
+                    type="text" 
+                    placeholder="Buscar nome ou descrição..." 
+                    value={searchTerm}
+                    onChange={e => setSearchTerm(e.target.value)}
+                    className="pl-10 pr-4 py-2 rounded-lg border border-slate-200 focus:ring-2 focus:ring-blue-500 w-full sm:w-64"
+                />
+             </div>
+             <button onClick={handleNovoLancamento} className="bg-slate-900 text-white px-4 py-2 rounded-lg flex gap-2 hover:bg-slate-800 shadow-sm whitespace-nowrap">
+                <Plus size={20} /> <span className="hidden sm:inline">Lançamento</span>
+             </button>
+          </div>
       </div>
 
-      {/* ... (Barras de filtro e Cards de Resumo permanecem iguais) ... */}
       <div className="flex p-1 bg-slate-200 rounded-xl w-full max-w-2xl overflow-x-auto">
           {['Geral', 'Adulto', 'Infantil', 'Kids', 'Loja'].map((cat) => (
               <button key={cat} onClick={() => setFiltroTurma(cat as any)} className={`flex-1 py-2 px-4 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${filtroTurma === cat ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>{cat === 'Geral' || cat === 'Loja' ? cat : `Turma ${cat}`}</button>
@@ -287,26 +308,30 @@ export default function Financeiro() {
             <table className="w-full text-left min-w-[700px]">
                 <thead className="bg-slate-50 text-slate-600 text-xs uppercase tracking-wider"><tr><th className="p-4">Data</th><th className="p-4">Descrição</th><th className="p-4">Categoria</th><th className="p-4">Pagamento</th><th className="p-4 text-right">Valor</th><th className="p-4 text-right"></th></tr></thead>
                 <tbody className="divide-y divide-slate-100 text-sm">
-                {transacoesFiltradas.map((t) => (
-                    <tr key={t.id} className="hover:bg-slate-50 group">
-                    <td className="p-4 text-slate-600 flex gap-2 items-center"><Calendar size={14}/> {format(new Date(t.data), 'dd/MM/yy')}</td>
-                    <td className="p-4 font-medium text-slate-900">{t.descricao}{t.alunos && <span className="block text-xs text-slate-400 font-normal">{t.alunos.nome}</span>}</td>
-                    <td className="p-4"><span className="px-2 py-1 bg-slate-100 text-slate-600 rounded text-xs">{t.categoria}</span></td>
-                    <td className="p-4 align-top">{renderPagamentoInfo(t)}</td>
-                    <td className={`p-4 text-right font-bold ${t.tipo === 'Receita' ? 'text-green-600' : 'text-red-600'}`}>{t.tipo === 'Receita' ? '+' : '-'} R$ {Number(t.valor).toFixed(2)}</td>
-                    <td className="p-4 text-right flex justify-end gap-2">
-                        <button onClick={() => handleEdit(t)} className="text-blue-600 hover:bg-blue-50 p-1 rounded"><Edit size={16}/></button>
-                        <button 
-                            onClick={() => setCustomAlert({
-                                show: true, title: 'Apagar Registro?', message: `Deseja realmente remover "${t.descricao}"?`, type: 'danger', onConfirm: () => handleDelete(t.id)
-                            })} 
-                            className="text-red-600 hover:bg-red-50 p-1 rounded"
-                        >
-                            <Trash2 size={16}/>
-                        </button>
-                    </td>
-                    </tr>
-                ))}
+                {transacoesFiltradas.length > 0 ? (
+                    transacoesFiltradas.map((t) => (
+                        <tr key={t.id} className="hover:bg-slate-50 group">
+                        <td className="p-4 text-slate-600 flex gap-2 items-center"><Calendar size={14}/> {format(new Date(t.data), 'dd/MM/yy')}</td>
+                        <td className="p-4 font-medium text-slate-900">{t.descricao}{t.alunos && <span className="block text-xs text-slate-400 font-normal">{t.alunos.nome}</span>}</td>
+                        <td className="p-4"><span className="px-2 py-1 bg-slate-100 text-slate-600 rounded text-xs">{t.categoria}</span></td>
+                        <td className="p-4 align-top">{renderPagamentoInfo(t)}</td>
+                        <td className={`p-4 text-right font-bold ${t.tipo === 'Receita' ? 'text-green-600' : 'text-red-600'}`}>{t.tipo === 'Receita' ? '+' : '-'} R$ {Number(t.valor).toFixed(2)}</td>
+                        <td className="p-4 text-right flex justify-end gap-2">
+                            <button onClick={() => handleEdit(t)} className="text-blue-600 hover:bg-blue-50 p-1 rounded"><Edit size={16}/></button>
+                            <button 
+                                onClick={() => setCustomAlert({
+                                    show: true, title: 'Apagar Registro?', message: `Deseja realmente remover "${t.descricao}"?`, type: 'danger', onConfirm: () => handleDelete(t.id)
+                                })} 
+                                className="text-red-600 hover:bg-red-50 p-1 rounded"
+                            >
+                                <Trash2 size={16}/>
+                            </button>
+                        </td>
+                        </tr>
+                    ))
+                ) : (
+                    <tr><td colSpan={6} className="p-8 text-center text-slate-400 italic">Nenhum lançamento encontrado.</td></tr>
+                )}
                 </tbody>
             </table>
       </div>
@@ -369,7 +394,7 @@ export default function Financeiro() {
         </div>
       )}
 
-      {/* MODAL DE ALERTA PERSONALIZADO (Mantido igual) */}
+      {/* MODAL DE ALERTA PERSONALIZADO */}
       {customAlert.show && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[999] animate-fadeIn">
           <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-sm shadow-2xl text-center border border-white">

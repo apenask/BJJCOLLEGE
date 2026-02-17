@@ -1,12 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { 
-  Plus, Search, Edit, Trash2, User, CheckCircle, 
-  Award, Brain, DollarSign, X, 
-  HeartPulse, Cake, Phone, Calendar, ChevronLeft, Trophy, Medal, ClipboardList, Info, Upload, Droplet, Zap
+  Plus, Edit, Trash2, User, CheckCircle, 
+  Brain, DollarSign, X, 
+  HeartPulse, Cake, Phone, ChevronLeft, Trophy, Medal, Zap, AlertTriangle
 } from 'lucide-react';
-import { startOfMonth, endOfMonth, format } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
+import { startOfMonth, endOfMonth } from 'date-fns';
 import { useToast } from '../contexts/ToastContext';
 
 interface Aluno {
@@ -42,17 +41,27 @@ export default function Alunos() {
   const [tabAtual, setTabAtual] = useState<'Adulto' | 'Infantil' | 'Kids'>('Adulto');
   const [viewState, setViewState] = useState<'list' | 'form' | 'details'>('list');
   const [searchTerm, setSearchTerm] = useState('');
-  const [formData, setFormData] = useState<Partial<Aluno>>({ plano_dias: [] });
+  
+  const [formData, setFormData] = useState<Partial<Aluno>>({ 
+    plano_dias: [], 
+    plano_tipo: 'Todos os dias',
+    categoria: 'Adulto',
+    graduacao: '', 
+    status: 'Ativo'
+  });
+  
   const [selectedAluno, setSelectedAluno] = useState<Aluno | null>(null);
   const [editMode, setEditMode] = useState(false);
 
+  // Estados dos Modais
   const [customAlert, setCustomAlert] = useState({ show: false, id: '', nome: '' });
+  const [forceDeleteAlert, setForceDeleteAlert] = useState({ show: false, id: '', nome: '' }); // NOVO: Modal de Forçar Exclusão
+  
   const [pagamentoModal, setPagamentoModal] = useState<{ show: boolean, aluno: Aluno | null, valorTotal: number }>({ show: false, aluno: null, valorTotal: 0 });
   const [pagamentosParciais, setPagamentosParciais] = useState<{ metodo: string, valor: number }[]>([]);
 
   useEffect(() => { fetchAlunos(); }, []);
 
-  // --- CORREÇÃO JACKSON: FILTRANDO APENAS POR MENSALIDADE ---
   async function fetchAlunos() {
     setLoading(true);
     try {
@@ -60,12 +69,11 @@ export default function Alunos() {
       const inicioMes = startOfMonth(new Date()).toISOString();
       const fimMes = endOfMonth(new Date()).toISOString();
 
-      // Buscamos transações apenas do tipo 'Receita' e categoria 'Mensalidade'
       const { data: pagamentos } = await supabase
         .from('transacoes')
         .select('aluno_id')
         .eq('tipo', 'Receita')
-        .eq('categoria', 'Mensalidade') // ISSO IMPEDE QUE VENDAS DA LOJA COMPUTEM COMO MENSALIDADE
+        .eq('categoria', 'Mensalidade')
         .gte('data', inicioMes)
         .lte('data', fimMes);
 
@@ -77,12 +85,11 @@ export default function Alunos() {
       }));
       setAlunos(alunosProc || []);
       
-      // Atualiza o aluno selecionado se estiver na tela de detalhes
       if (selectedAluno) {
         const atualizado = alunosProc?.find(a => a.id === selectedAluno.id);
         if (atualizado) setSelectedAluno(atualizado);
       }
-    } catch(e) { console.error(e) } finally { setLoading(false) }
+    } catch(e) { console.error(e); } finally { setLoading(false); }
   }
 
   function adicionarMetodo() {
@@ -151,18 +158,84 @@ export default function Alunos() {
 
   async function handleSubmit(e: React.FormEvent) {
       e.preventDefault();
+      
+      // VALIDAÇÃO OBRIGATÓRIA
+      if (!formData.nome || !formData.graduacao || !formData.categoria || !formData.data_nascimento) {
+          addToast('Preencha os campos obrigatórios (*)', 'warning');
+          return;
+      }
+
       try {
         const alunoData = { ...formData };
         delete (alunoData as any).pago_mes_atual; 
+
+        if (!alunoData.plano_tipo) alunoData.plano_tipo = 'Todos os dias';
+        if (!alunoData.status) alunoData.status = 'Ativo';
+        
         if (editMode && formData.id) await supabase.from('alunos').update(alunoData).eq('id', formData.id);
         else await supabase.from('alunos').insert([alunoData]);
-        addToast('Salvo!', 'success'); setViewState('list'); fetchAlunos();
-      } catch (e:any) { addToast(e.message, 'error') }
+        
+        addToast('Aluno salvo com sucesso!', 'success'); 
+        setViewState('list'); 
+        fetchAlunos();
+      } catch (e:any) { 
+        console.error(e);
+        addToast(`Erro ao salvar: ${e.message}`, 'error'); 
+      }
   }
 
+  // --- FUNÇÃO DE EXCLUSÃO NORMAL ---
   async function executarExclusao() {
-    await supabase.from('alunos').delete().eq('id', customAlert.id);
-    addToast('Excluído.', 'success'); setCustomAlert({ show: false, id: '', nome: '' }); fetchAlunos();
+    const { error } = await supabase.from('alunos').delete().eq('id', customAlert.id);
+    
+    if (error) {
+        console.error(error);
+        // Se der erro de chave estrangeira (histórico preso), abre o modal de FORÇAR
+        if (error.code === '23503' || error.message.includes('foreign key')) {
+            setCustomAlert({ show: false, id: '', nome: '' }); // Fecha o normal
+            setForceDeleteAlert({ show: true, id: customAlert.id, nome: customAlert.nome }); // Abre o forçado
+        } else {
+            addToast('Erro desconhecido ao excluir aluno.', 'error');
+        }
+    } else {
+        addToast('Excluído com sucesso.', 'success'); 
+        setCustomAlert({ show: false, id: '', nome: '' }); 
+        if (selectedAluno?.id === customAlert.id) {
+            setViewState('list');
+            setSelectedAluno(null);
+        }
+        fetchAlunos();
+    }
+  }
+
+  // --- NOVA FUNÇÃO: FORÇAR EXCLUSÃO ---
+  async function executarExclusaoForcada() {
+      try {
+          const id = forceDeleteAlert.id;
+          
+          // 1. Apaga Transações vinculadas
+          await supabase.from('transacoes').delete().eq('aluno_id', id);
+          
+          // 2. Apaga Vendas vinculadas (se houver)
+          await supabase.from('vendas').delete().eq('aluno_id', id);
+          
+          // 3. Tenta apagar o aluno de novo
+          const { error } = await supabase.from('alunos').delete().eq('id', id);
+
+          if (error) throw error;
+
+          addToast('Aluno e histórico removidos à força!', 'success');
+          setForceDeleteAlert({ show: false, id: '', nome: '' });
+          if (selectedAluno?.id === id) {
+            setViewState('list');
+            setSelectedAluno(null);
+          }
+          fetchAlunos();
+
+      } catch (error) {
+          console.error(error);
+          addToast('Erro crítico ao forçar exclusão.', 'error');
+      }
   }
 
   const toggleDia = (dia: string) => {
@@ -176,7 +249,19 @@ export default function Alunos() {
     aluno.nome.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  // --- VIEW: DETALHES (FICHA DO ALUNO REDESIGN) ---
+  function handleNovoAluno() {
+    setFormData({
+        categoria: tabAtual, 
+        plano_tipo: 'Todos os dias', 
+        plano_dias: [],
+        graduacao: '', 
+        status: 'Ativo'
+    }); 
+    setEditMode(false); 
+    setViewState('form');
+  }
+
+  // --- VIEW: DETALHES ---
   if (viewState === 'details' && selectedAluno) {
     const a = selectedAluno;
     return (
@@ -192,7 +277,7 @@ export default function Alunos() {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                {/* Lateral Esquerda: Perfil Rápido */}
+                {/* Lateral Esquerda */}
                 <div className="lg:col-span-4 space-y-6">
                     <div className="bg-white rounded-[2.5rem] p-8 shadow-xl shadow-slate-200/50 border border-white flex flex-col items-center text-center relative overflow-hidden">
                         <div className={`absolute top-0 inset-x-0 h-3 ${a.status === 'Ativo' ? 'bg-green-500' : 'bg-slate-300'}`}></div>
@@ -212,7 +297,6 @@ export default function Alunos() {
                             <span className="bg-blue-100 text-blue-700 text-[10px] font-black px-3 py-1 rounded-full uppercase">{a.categoria}</span>
                         </div>
 
-                        {/* Status Financeiro com Botão de Pagar */}
                         <div className="w-full p-4 rounded-3xl border border-slate-100 bg-slate-50 mb-4 text-left">
                             <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Situação Financeira</p>
                             <div className="flex items-center justify-between">
@@ -250,9 +334,8 @@ export default function Alunos() {
                     </div>
                 </div>
 
-                {/* Área Principal: Informações Detalhadas */}
+                {/* Área Principal */}
                 <div className="lg:col-span-8 space-y-6">
-                    {/* Bloco 1: Treino e Plano */}
                     <div className="bg-white rounded-[2.5rem] p-8 shadow-xl border border-white">
                         <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight mb-6 flex items-center gap-2">
                             <Zap size={22} className="text-yellow-500"/> Detalhes do Plano
@@ -281,7 +364,6 @@ export default function Alunos() {
                         </div>
                     </div>
 
-                    {/* Bloco 2: Saúde (Muito Importante) */}
                     <div className="bg-white rounded-[2.5rem] p-8 shadow-xl border border-white bg-gradient-to-br from-white to-red-50/20">
                         <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight mb-6 flex items-center gap-2">
                             <HeartPulse size={22} className="text-red-500"/> Saúde e Condições
@@ -289,7 +371,7 @@ export default function Alunos() {
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
                             <div className="space-y-6">
                                 <div className="flex items-center gap-4">
-                                    <div className="p-4 bg-red-100 text-red-600 rounded-3xl"><Droplet size={24}/></div>
+                                    <div className="p-4 bg-red-100 text-red-600 rounded-3xl"><Plus size={24} className="rotate-45"/></div>
                                     <div>
                                         <p className="text-[10px] font-black text-slate-400 uppercase">Tipo Sanguíneo</p>
                                         <p className="text-2xl font-black text-red-600 italic">{a.tipo_sanguineo || 'N/A'}</p>
@@ -351,11 +433,29 @@ export default function Alunos() {
                       <div className="bg-white rounded-[2.5rem] p-6 md:p-10 shadow-xl border border-white">
                           <div className="flex items-center gap-3 mb-8 text-blue-600"><User size={24}/><h3 className="text-xl font-bold text-slate-800">Dados Pessoais</h3></div>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                              <div className="md:col-span-2"><label className="text-xs font-bold text-slate-400 uppercase ml-1">Nome Completo</label><input className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-medium focus:ring-2 focus:ring-blue-500" required value={formData.nome || ''} onChange={e=>setFormData({...formData, nome: e.target.value})} placeholder="Ex: Jackson Lima" /></div>
-                              <div><label className="text-xs font-bold text-slate-400 uppercase ml-1">Aniversário</label><input type="date" className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-medium text-slate-600 focus:ring-2 focus:ring-blue-500" value={formData.data_nascimento || ''} onChange={e=>setFormData({...formData, data_nascimento: e.target.value})} /></div>
-                              <div><label className="text-xs font-bold text-slate-400 uppercase ml-1">WhatsApp</label><input className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-medium focus:ring-2 focus:ring-blue-500" value={formData.whatsapp || ''} onChange={e=>setFormData({...formData, whatsapp: e.target.value})} placeholder="(00) 00000-0000" /></div>
-                              <div><label className="text-xs font-bold text-slate-400 uppercase ml-1">Turma</label><select className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-bold text-blue-600" value={formData.categoria} onChange={e=>setFormData({...formData, categoria: e.target.value as any})}><option value="Adulto">🥋 Adulto</option><option value="Infantil">👦 Infantil</option><option value="Kids">👶 Kids</option></select></div>
-                              <div><label className="text-xs font-bold text-slate-400 uppercase ml-1">Graduação</label><select className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-medium focus:ring-2 focus:ring-blue-500" value={formData.graduacao} onChange={e=>setFormData({...formData, graduacao: e.target.value})}><option value="">Selecione...</option><option>Branca</option><option>Cinza</option><option>Amarela</option><option>Laranja</option><option>Verde</option><option>Azul</option><option>Roxa</option><option>Marrom</option><option>Preta</option></select></div>
+                              <div className="md:col-span-2">
+                                  <label className="text-xs font-bold text-slate-400 uppercase ml-1">Nome Completo <span className="text-red-500">*</span></label>
+                                  <input className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-medium focus:ring-2 focus:ring-blue-500" value={formData.nome || ''} onChange={e=>setFormData({...formData, nome: e.target.value})} placeholder="Ex: Jackson Lima" />
+                              </div>
+                              <div>
+                                  <label className="text-xs font-bold text-slate-400 uppercase ml-1">Aniversário <span className="text-red-500">*</span></label>
+                                  <input type="date" className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-medium text-slate-600 focus:ring-2 focus:ring-blue-500" value={formData.data_nascimento || ''} onChange={e=>setFormData({...formData, data_nascimento: e.target.value})} />
+                              </div>
+                              <div>
+                                  <label className="text-xs font-bold text-slate-400 uppercase ml-1">WhatsApp</label>
+                                  <input className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-medium focus:ring-2 focus:ring-blue-500" value={formData.whatsapp || ''} onChange={e=>setFormData({...formData, whatsapp: e.target.value})} placeholder="(00) 00000-0000" />
+                              </div>
+                              <div>
+                                  <label className="text-xs font-bold text-slate-400 uppercase ml-1">Turma <span className="text-red-500">*</span></label>
+                                  <select className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-bold text-blue-600" value={formData.categoria} onChange={e=>setFormData({...formData, categoria: e.target.value as any})}><option value="Adulto">🥋 Adulto</option><option value="Infantil">👦 Infantil</option><option value="Kids">👶 Kids</option></select>
+                              </div>
+                              <div>
+                                <label className="text-xs font-bold text-slate-400 uppercase ml-1">Graduação <span className="text-red-500">*</span></label>
+                                <select className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-medium focus:ring-2 focus:ring-blue-500" value={formData.graduacao || ''} onChange={e=>setFormData({...formData, graduacao: e.target.value})}>
+                                    <option value="">Selecione...</option>
+                                    <option>Branca</option><option>Cinza</option><option>Amarela</option><option>Laranja</option><option>Verde</option><option>Azul</option><option>Roxa</option><option>Marrom</option><option>Preta</option>
+                                </select>
+                              </div>
                           </div>
                       </div>
 
@@ -419,7 +519,7 @@ export default function Alunos() {
     <div className="space-y-6 animate-fadeIn pb-20">
       <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
           <h2 className="text-2xl font-bold text-slate-800 italic uppercase tracking-tighter">Gerenciar Alunos</h2>
-          <button onClick={()=>{setFormData({categoria: tabAtual, plano_tipo:'Todos os dias', plano_dias: []}); setEditMode(false); setViewState('form')}} className="bg-slate-900 text-white px-6 py-3 rounded-2xl flex items-center gap-2 hover:bg-black shadow-lg transition-all font-bold text-sm w-full sm:w-auto justify-center"><Plus size={20}/> NOVO ALUNO</button>
+          <button onClick={handleNovoAluno} className="bg-slate-900 text-white px-6 py-3 rounded-2xl flex items-center gap-2 hover:bg-black shadow-lg transition-all font-bold text-sm w-full sm:w-auto justify-center"><Plus size={20}/> NOVO ALUNO</button>
       </div>
       
       <div className="flex bg-slate-200 p-1 rounded-2xl gap-1 overflow-x-auto">
@@ -477,7 +577,7 @@ export default function Alunos() {
            </table>
       </div>
 
-      {/* MODAL PAGAMENTO COM DIVISÃO AUTOMÁTICA */}
+      {/* MODAL PAGAMENTO */}
       {pagamentoModal.show && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-md shadow-2xl animate-fadeIn border">
@@ -508,7 +608,7 @@ export default function Alunos() {
         </div>
       )}
 
-      {/* MODAL EXCLUIR (CUSTOM ALERT) */}
+      {/* CUSTOM ALERT (NORMAL) */}
       {customAlert.show && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[999] animate-fadeIn">
           <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-sm shadow-2xl text-center">
@@ -518,6 +618,26 @@ export default function Alunos() {
             <div className="flex flex-col gap-3">
               <button onClick={executarExclusao} className="w-full py-4 bg-red-600 text-white rounded-[1.5rem] font-black uppercase shadow-xl">CONFIRMAR</button>
               <button onClick={() => setCustomAlert({ show: false, id: '', nome: '' })} className="w-full py-4 bg-slate-100 text-slate-500 rounded-[1.5rem] font-bold uppercase text-xs">CANCELAR</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ALERT DE FORÇAR EXCLUSÃO (NOVO) */}
+      {forceDeleteAlert.show && (
+        <div className="fixed inset-0 bg-red-900/80 backdrop-blur-md flex items-center justify-center p-4 z-[1000] animate-fadeIn">
+          <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-md shadow-2xl text-center border-4 border-red-500">
+            <div className="w-24 h-24 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-6 animate-pulse"><AlertTriangle size={50} /></div>
+            <h3 className="text-2xl font-black text-red-600 uppercase italic mb-2">REGISTROS PRESOS!</h3>
+            <p className="text-slate-600 mb-6 leading-relaxed font-bold">
+              Não conseguimos apagar <b>{forceDeleteAlert.nome}</b> porque ele(a) possui histórico financeiro (mensalidades ou vendas).
+            </p>
+            <p className="text-sm text-slate-500 mb-8 bg-slate-100 p-4 rounded-xl">
+              Deseja <b>FORÇAR A EXCLUSÃO</b>? Isso apagará o aluno e <u className="text-red-600">todo o seu histórico financeiro</u> para sempre.
+            </p>
+            <div className="flex flex-col gap-3">
+              <button onClick={executarExclusaoForcada} className="w-full py-4 bg-red-600 text-white rounded-[1.5rem] font-black uppercase shadow-xl hover:bg-red-700 hover:scale-105 transition-all">SIM, APAGAR TUDO</button>
+              <button onClick={() => setForceDeleteAlert({ show: false, id: '', nome: '' })} className="w-full py-4 bg-slate-100 text-slate-500 rounded-[1.5rem] font-bold uppercase text-xs hover:bg-slate-200">CANCELAR (MANTER ALUNO)</button>
             </div>
           </div>
         </div>

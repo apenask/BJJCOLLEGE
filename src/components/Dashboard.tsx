@@ -14,8 +14,8 @@ export default function Dashboard({ onNavigate }: { onNavigate: (page: string) =
     totalComissoes: 0,
     despesas: 0,
     saldoLiquido: 0,
-    totalAlunosAtivos: 0, // Mudado para focar em ativos
-    alunosPagantes: 0,    // Pagantes reais
+    totalAlunos: 0,       // Alterado de totalAlunosAtivos para totalAlunos (sem filtro)
+    alunosPagantes: 0,    
     alunosInadimplentes: 0,
     pagtoDinheiro: 0,
     pagtoPix: 0,
@@ -47,8 +47,9 @@ export default function Dashboard({ onNavigate }: { onNavigate: (page: string) =
         .select('valor_pago')
         .eq('mes_referencia', hoje.toISOString().slice(0, 7));
 
-      // 3. Alunos (SOMENTE ATIVOS importam para a métrica de inadimplência)
-      const { data: alunos } = await supabase.from('alunos').select('*').eq('status', 'Ativo');
+      // 3. Alunos - CORREÇÃO: Removemos o filtro .eq('status', 'Ativo')
+      // Se o aluno existe no banco, ele conta para o Dashboard.
+      const { data: alunos } = await supabase.from('alunos').select('*');
 
       // --- CÁLCULOS FINANCEIROS ---
       let receita = 0;
@@ -70,6 +71,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (page: string) =
                         if (m.metodo === 'Dinheiro') pDinheiro += v;
                         else if (m.metodo === 'Pix') pPix += v;
                         else if (m.metodo === 'Cartao') pCredito += v; 
+                        else if (m.metodo === 'Debito') pDebito += v;
                     });
                 } else if (dp.pagamento) {
                     const pag = dp.pagamento;
@@ -79,16 +81,14 @@ export default function Dashboard({ onNavigate }: { onNavigate: (page: string) =
                         if (pag.tipo === 'Débito') pDebito += valor; else pCredito += valor;
                     }
                 }
-            } else {
-                 // Fallback para transações antigas sem detalhe (assumindo Pix se não tiver info, ou ignorando do detalhe)
             }
         } else {
             despesas += valor;
         }
       });
 
-      // --- CÁLCULOS ALUNOS (Lógica Corrigida) ---
-      const totalAtivos = alunos?.length || 0;
+      // --- CÁLCULOS ALUNOS ---
+      const totalCadastrados = alunos?.length || 0;
       
       // Ids de alunos que têm receita esse mês
       const pagantesIds = new Set(transacoes?.filter(t => t.tipo === 'Receita' && t.aluno_id).map(t => t.aluno_id));
@@ -98,16 +98,16 @@ export default function Dashboard({ onNavigate }: { onNavigate: (page: string) =
         pagantesIds.has(a.id) || (a.bolsista_jiujitsu && a.bolsista_musculacao)
       ).length || 0;
 
-      const pendentes = totalAtivos - pagantesReais;
+      const pendentes = totalCadastrados - pagantesReais;
 
       setStats({
         receitaBruta: receita,
         totalComissoes: totalComissoesPagas,
         despesas: despesas,
         saldoLiquido: receita - despesas - totalComissoesPagas,
-        totalAlunosAtivos: totalAtivos,
+        totalAlunos: totalCadastrados,
         alunosPagantes: pagantesReais,
-        alunosInadimplentes: pendentes, // Se todos pagarem, isso será 0
+        alunosInadimplentes: pendentes,
         pagtoDinheiro: pDinheiro,
         pagtoPix: pPix,
         pagtoCredito: pCredito,
@@ -164,8 +164,8 @@ export default function Dashboard({ onNavigate }: { onNavigate: (page: string) =
   };
 
   // Cálculo da porcentagem de pagantes
-  const pctPagantes = stats.totalAlunosAtivos > 0 
-    ? ((stats.alunosPagantes / stats.totalAlunosAtivos) * 100).toFixed(0) 
+  const pctPagantes = stats.totalAlunos > 0 
+    ? ((stats.alunosPagantes / stats.totalAlunos) * 100).toFixed(0) 
     : 0;
 
   if (loading) return <div className="p-8 text-center text-slate-400 animate-pulse">Carregando painel...</div>;
@@ -195,10 +195,10 @@ export default function Dashboard({ onNavigate }: { onNavigate: (page: string) =
           </div>
 
           <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6 flex flex-col">
-                <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2"><Users className="text-slate-900"/> Resumo Alunos (Ativos)</h3>
+                <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2"><Users className="text-slate-900"/> Resumo Alunos</h3>
                 <div className="flex-1 space-y-8">
                     <div>
-                        <div className="flex justify-between items-end mb-2"><span className="text-sm font-medium text-slate-500">Total Ativos</span><span className="text-2xl font-bold text-slate-800">{stats.totalAlunosAtivos}</span></div>
+                        <div className="flex justify-between items-end mb-2"><span className="text-sm font-medium text-slate-500">Total Matriculados</span><span className="text-2xl font-bold text-slate-800">{stats.totalAlunos}</span></div>
                         <div className="w-full bg-slate-100 h-2 rounded-full"><div className="bg-slate-800 h-full rounded-full" style={{ width: '100%' }}></div></div>
                     </div>
                     <div>
