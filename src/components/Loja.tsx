@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { ShoppingBag, Plus, Edit, Trash2, X, ShoppingCart, History, Upload, Search, Package, AlertTriangle, CheckCircle, Wallet, NotebookPen, Calculator } from 'lucide-react';
+import { ShoppingBag, Plus, Edit, Trash2, X, ShoppingCart, History, Upload, Search, Package, AlertTriangle, CheckCircle, Wallet, NotebookPen, Calculator, Copy, QrCode } from 'lucide-react';
 import { useToast } from '../contexts/ToastContext';
 import { format } from 'date-fns';
 
@@ -32,7 +32,6 @@ export default function Loja() {
   const [showVenda, setShowVenda] = useState<Produto | null>(null);
   const [showReceber, setShowReceber] = useState<any | null>(null);
   
-  // ALERTA PERSONALIZADO (GLOBAL PARA LOJA)
   const [customAlert, setCustomAlert] = useState({ 
     show: false, 
     title: '', 
@@ -45,12 +44,10 @@ export default function Loja() {
   const [historico, setHistorico] = useState<any[]>([]);
   const [cobrancas, setCobrancas] = useState<any[]>([]);
 
-  // ESTADOS DE VENDA AVANÇADA
   const [itensPagamento, setItensPagamento] = useState<ItemPagamento[]>([{ metodo: 'Dinheiro', valor: '' }]);
   const [vendaQtd, setVendaQtd] = useState(1);
   const [alunoSelecionado, setAlunoSelecionado] = useState('');
   
-  // CAMPOS: DESCONTO E TROCO
   const [desconto, setDesconto] = useState<string>('');
   const [valorRecebidoCliente, setValorRecebidoCliente] = useState<string>('');
 
@@ -61,7 +58,6 @@ export default function Loja() {
   useEffect(() => { fetchProdutos(); fetchAlunos(); }, []);
   useEffect(() => { if (tab === 'Historico') fetchHistorico(); if (tab === 'Cobrancas') fetchCobrancas(); }, [tab]);
 
-  // CÁLCULOS DA VENDA
   const subtotal = showVenda ? showVenda.preco * vendaQtd : 0;
   const valorDesconto = Number(desconto) || 0;
   const totalFinal = Math.max(0, subtotal - valorDesconto);
@@ -125,7 +121,6 @@ export default function Loja() {
     } catch { addToast('Erro ao salvar.', 'error'); }
   }
 
-  // --- DELETE PRODUTO (VIA CUSTOM ALERT) ---
   async function handleDeleteProduto(id: string) {
       try { 
           await supabase.from('produtos').delete().eq('id', id); 
@@ -134,7 +129,6 @@ export default function Loja() {
       } catch { addToast('Erro ao excluir.', 'error'); }
   }
 
-  // --- FUNÇÃO DE VENDA ---
   async function handleRealizarVenda() {
     if (!showVenda) return;
     
@@ -185,7 +179,6 @@ export default function Loja() {
     } catch { addToast('Erro na venda.', 'error'); }
   }
 
-  // --- RECEBER FIADO ---
   function abrirModalReceber(cobranca: any) {
       const valorFiado = cobranca.valor;
       setItensPagamento([{ metodo: 'Pix', valor: String(valorFiado) }]); 
@@ -213,10 +206,8 @@ export default function Loja() {
       } catch { addToast('Erro ao dar baixa.', 'error'); }
   }
 
-  // --- EXECUÇÃO DA EXCLUSÃO DO HISTÓRICO (Chamada pelo Modal) ---
   async function executarExclusaoVenda(venda: any) {
       try {
-          // 1. Devolver ao estoque
           const itens = venda.detalhes_pagamento?.itens;
           if (itens && Array.isArray(itens)) {
               for (const item of itens) {
@@ -228,7 +219,6 @@ export default function Loja() {
                   }
               }
           }
-          // 2. Apagar transação
           await supabase.from('transacoes').delete().eq('id', venda.id);
           addToast('Venda cancelada e estoque estornado.', 'success');
           fetchHistorico();
@@ -341,7 +331,6 @@ export default function Loja() {
           </div>
       )}
 
-      {/* MODAL VENDA COM CALCULADORA */}
       {showVenda && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
             <div className="bg-white p-6 rounded-[2rem] w-full max-w-md shadow-2xl overflow-y-auto max-h-[90vh]">
@@ -406,17 +395,25 @@ export default function Loja() {
                         </select>
                     </div>
 
-
+                    {/* QR CODE PERSONALIZADO NO MODAL DE VENDA (LOJA) */}
                     {itensPagamento.some(i => i.metodo === 'Pix') && (
-                 <div className="bg-blue-50 border-2 border-blue-200 p-4 rounded-[2rem] flex flex-col items-center animate-bounceIn">
-                 <p className="text-[10px] font-black text-blue-600 uppercase mb-3">Escaneie para Pagar (Pix)</p>
-                 <div className="bg-white p-2 rounded-2xl shadow-sm mb-3">
-                 {/* Aqui você pode colocar a URL do seu QR Code fixo da loja */}
-                 <img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=CHAVE_DA_LOJA" className="w-32 h-32" />
-                </div>
-                <button onClick={() => { navigator.clipboard.writeText('SUA_CHAVE_AQUI'); addToast('Chave copiada!', 'success'); }} className="text-[10px] font-bold text-blue-700 underline uppercase">Copiar Chave Pix</button>
-    </div>
-)}
+                        <div className="bg-blue-50 border-2 border-blue-200 p-4 rounded-[2rem] flex flex-col items-center animate-bounceIn">
+                            <p className="text-[10px] font-black text-blue-600 uppercase mb-3">Escaneie para Pagar (Loja)</p>
+                            <div className="bg-white p-2 rounded-2xl shadow-sm mb-3">
+                                {/* Substitua o link abaixo pela sua imagem real do QR Code da loja */}
+                                <img src="SUA_IMAGEM_QR_LOJA_AQUI" className="w-32 h-32 object-contain" alt="QR Code Loja" />
+                            </div>
+                            <div className="flex flex-col items-center gap-1">
+                                <p className="text-[10px] font-bold text-slate-400 uppercase">Chave Pix:</p>
+                                <div className="flex items-center gap-2">
+                                    <span className="text-xs font-black text-blue-700">SUA_CHAVE_PIX_DA_LOJA</span>
+                                    <button onClick={() => { navigator.clipboard.writeText('CHAVE_COPIA_COLA_LOJA'); addToast('Copiado!', 'success'); }} className="text-blue-700 hover:bg-blue-100 p-1 rounded-lg transition-all">
+                                        <Copy size={14}/>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     <button onClick={handleRealizarVenda} className="w-full bg-green-600 text-white py-4 rounded-2xl font-black uppercase tracking-widest shadow-xl hover:bg-green-700 mt-2">Confirmar</button>
                 </div>
@@ -473,10 +470,10 @@ export default function Loja() {
         </div>
       )}
 
-      {/* MODAL ALERTA PERSONALIZADO (NOVO) */}
+      {/* MODAL ALERTA PERSONALIZADO */}
       {customAlert.show && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[999] animate-fadeIn">
-          <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-sm shadow-2xl text-center border border-white">
+          <div className="bg-white rounded-[2.5rem] p-8 w-full max-sm shadow-2xl text-center border border-white">
             <div className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 ${customAlert.type === 'danger' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
               {customAlert.type === 'danger' ? <Trash2 size={40} /> : <CheckCircle size={40} />}
             </div>

@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { 
   Plus, Edit, Trash2, User, CheckCircle, 
   Brain, DollarSign, X, 
-  HeartPulse, Cake, Phone, ChevronLeft, Trophy, Medal, Zap, AlertTriangle, Droplet, ShoppingBag
+  HeartPulse, Cake, Phone, ChevronLeft, Trophy, Medal, Zap, AlertTriangle, Droplet, ShoppingBag, Copy, QrCode
 } from 'lucide-react';
 import { startOfMonth, endOfMonth } from 'date-fns';
 import { useToast } from '../contexts/ToastContext';
@@ -638,6 +638,30 @@ export default function Alunos() {
                     ))}
                     <button onClick={adicionarMetodo} className="text-xs font-bold text-blue-600 uppercase tracking-widest hover:underline">+ Adicionar e dividir</button>
                 </div>
+
+                {/* QR CODE PERSONALIZADO (IGUAL À LOJA) */}
+                {pagamentosParciais.some(p => p.metodo === 'Pix') && (
+                    <div className="bg-blue-50 border-2 border-blue-200 p-4 rounded-[2rem] flex flex-col items-center animate-bounceIn mb-6 mt-4">
+                        <p className="text-[10px] font-black text-blue-600 uppercase mb-3 text-center">Escaneie para Pagar (Mensalidade)</p>
+                        <div className="bg-white p-2 rounded-2xl shadow-sm mb-3">
+                            {/* Substitua o link abaixo pelo link real da sua imagem de QR Code */}
+                            <img src="LINK_DA_SUA_IMAGEM_MENSALIDADE_AQUI" className="w-32 h-32 object-contain" alt="QR Pix Mensalidade" />
+                        </div>
+                        <div className="flex flex-col items-center gap-1">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase">Chave Pix:</p>
+                            <div className="flex items-center gap-2">
+                                <span className="text-xs font-black text-blue-700">SUA_CHAVE_PIX_EXTENSO</span>
+                                <button 
+                                    type="button"
+                                    onClick={() => { navigator.clipboard.writeText('CHAVE_PIX_COPIA_E_COLA'); addToast('Copiado!', 'success'); }} 
+                                    className="text-blue-700 hover:bg-blue-100 p-1 rounded-lg transition-all"
+                                >
+                                    <Copy size={14}/>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 <div className="mb-6 px-2 flex justify-between items-center text-sm border-t pt-4">
                     <span className="text-slate-400 font-bold uppercase text-[10px]">Total Somado:</span>
