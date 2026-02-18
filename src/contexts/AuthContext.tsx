@@ -12,11 +12,11 @@ interface AuthContextData {
   user: User | null;
   session: boolean;
   loading: boolean;
-  signIn: (usuario: string, pass: string) => Promise<void>;
+  signIn: (usuario: string, senha: string) => Promise<void>;
   signOut: () => void;
 }
 
-const AuthContext = createContext<AuthContextData>({} as AuthContextData);
+const AuthContext = createContext<AuthContextData | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -25,11 +25,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const loadStorageData = async () => {
       const storedUser = localStorage.getItem('@BJJCollege:user');
+
       if (storedUser) {
-        setUser(JSON.parse(storedUser));
+        try {
+          setUser(JSON.parse(storedUser));
+        } catch {
+          localStorage.removeItem('@BJJCollege:user');
+        }
       }
+
       setLoading(false);
     };
+
     loadStorageData();
   }, []);
 
