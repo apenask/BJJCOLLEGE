@@ -25,11 +25,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const loadStorageData = async () => {
       const storedUser = localStorage.getItem('@BJJCollege:user');
+
       if (storedUser) {
-        setUser(JSON.parse(storedUser));
+        try {
+          setUser(JSON.parse(storedUser));
+        } catch {
+          localStorage.removeItem('@BJJCollege:user');
+        }
       }
+
       setLoading(false);
     };
+
     loadStorageData();
   }, []);
 

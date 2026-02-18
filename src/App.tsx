@@ -16,11 +16,45 @@ import SecurityGuard, { SECURITY_KEY } from './components/SecurityGuard';
 import AccessDenied from './components/AccessDenied';
 import LiberarAcesso from './components/LiberarAcesso';
 
+const VALID_PAGES = [
+  'dashboard',
+  'relatorios',
+  'alunos',
+  'financeiro',
+  'loja',
+  'pix',
+  'configuracoes',
+  'dev',
+  'instrutores'
+] as const;
+
+type ValidPage = (typeof VALID_PAGES)[number];
+
+function isValidPage(page: string): page is ValidPage {
+  return VALID_PAGES.includes(page as ValidPage);
+}
+
+function getInitialPage(): ValidPage {
+  const storedPage = localStorage.getItem('bjj_last_page');
+
+  if (storedPage && VALID_PAGES.includes(storedPage as ValidPage)) {
+    return storedPage as ValidPage;
+  }
+
+  return 'dashboard';
+}
+
 function AppContent() {
   const { user, loading } = useAuth();
-  const [currentPage, setCurrentPage] = useState(() => localStorage.getItem('bjj_last_page') || 'dashboard');
+  const [currentPage, setCurrentPage] = useState<ValidPage>(getInitialPage);
   const [isAuthorizedDevice, setIsAuthorizedDevice] = useState(false);
   const [checkingDevice, setCheckingDevice] = useState(true);
+
+  function handleNavigate(page: string) {
+    if (isValidPage(page)) {
+      setCurrentPage(page);
+    }
+  }
 
   useEffect(() => {
     const authorized = localStorage.getItem(SECURITY_KEY);
@@ -36,8 +70,8 @@ function AppContent() {
   if (!user) return <Login />;
 
   return (
-    <Layout currentPage={currentPage} onNavigate={setCurrentPage}>
-      {currentPage === 'dashboard' && <Dashboard onNavigate={setCurrentPage} />}
+    <Layout currentPage={currentPage} onNavigate={handleNavigate}>
+      {currentPage === 'dashboard' && <Dashboard onNavigate={handleNavigate} />}
       {currentPage === 'relatorios' && <Relatorios />}
       {currentPage === 'alunos' && <Alunos />}
       {currentPage === 'financeiro' && <Financeiro />}
