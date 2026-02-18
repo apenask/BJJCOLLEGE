@@ -37,18 +37,9 @@ export default function Login() {
         
         {/* Cabeçalho com Logo */}
         <div className="pt-10 pb-6 text-center px-8">
-          {/* CORREÇÃO DA IMAGEM: 
-              - Removido padding extra (p-1) para a imagem encostar na borda se necessário.
-              - Mantido overflow-hidden para o formato circular.
-              - Tamanho ajustado para w-28 h-28.
-          */}
           <div className="mx-auto w-28 h-28 bg-white rounded-full flex items-center justify-center mb-6 shadow-lg shadow-white/10 border-4 border-zinc-900 overflow-hidden">
-             {/* DICA DE ESTILO:
-                - 'object-cover' força a imagem a preencher TODO o círculo, cortando excessos.
-                - Isso evita espaços brancos nas laterais se a imagem não for perfeitamente quadrada.
-             */}
              <img 
-                src="https://i.imgur.com/51l5joO.jpeg" // Exemplo: Troque pela URL da sua logo
+                src="https://i.imgur.com/51l5joO.jpeg"
                 alt="Logo Academia" 
                 className="w-full h-full object-cover" 
              />
