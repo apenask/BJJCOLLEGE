@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { 
   Plus, TrendingUp, TrendingDown, DollarSign, Calendar, Trash2, Edit3, X, 
   Banknote, QrCode, CreditCard, Search, Bell, CheckCircle, AlertCircle, 
-  FileText, Repeat, CalendarClock, ArrowRight, Info 
+  FileText, Repeat, CalendarClock, ArrowRight 
 } from 'lucide-react';
 import { format, isSameDay, isAfter, isBefore, addDays, parseISO, addMonths, addWeeks } from 'date-fns';
 import { useToast } from '../contexts/ToastContext';
@@ -87,14 +87,9 @@ export default function Financeiro() {
 
   async function handleBaixarConta(conta: Transacao) {
     try {
-        // Ao baixar, transformamos em 'Despesa'. A data de pagamento assume a data de HOJE (realização do caixa)
-        // Ou mantemos a data original se o usuário preferir, mas financeiramente o caixa sai hoje.
-        // Vou manter a data original do agendamento para respeitar o boleto, mas o tipo muda para Despesa.
-        
         await supabase.from('transacoes').update({
-            tipo: 'Despesa', // <--- AQUI É A MÁGICA: Só agora vira Despesa e aparece no Extrato
-            descricao: `${conta.descricao}`,
-            // data: new Date().toISOString().split('T')[0] // Se quiser mudar a data para o dia do pagamento, descomente aqui
+            tipo: 'Despesa', 
+            descricao: `${conta.descricao}`
         }).eq('id', conta.id);
         
         addToast('Conta paga! Agora ela aparece no Extrato.', 'success');
@@ -119,9 +114,6 @@ export default function Financeiro() {
       const novoEstado = !isParcelamento;
       setIsParcelamento(novoEstado);
       setParcelasPreview([]);
-      
-      // AUTO-CORREÇÃO: Se ativou parcelamento e estava como "Despesa", muda para "Conta a Pagar"
-      // Isso evita que o usuário lance 10 despesas pagas de uma vez sem querer.
       if (novoEstado && formData.tipo === 'Despesa') {
           setFormData(prev => ({ ...prev, tipo: 'Conta a Pagar' }));
           addToast('Modo Parcelado: Tipo alterado para "Conta a Pagar" (Agendamento).', 'info');
@@ -177,21 +169,17 @@ export default function Financeiro() {
           codigo_barras: formData.codigo_barras
       };
       
-      // MODO 1: Salvar Parcelamento (LOTE)
       if (isParcelamento && parcelasPreview.length > 0) {
           const payloadBatch = parcelasPreview.map(p => ({
               descricao: p.descricao,
               valor: Number(p.valor),
-              tipo: formData.tipo, // Aqui ele vai pegar 'Conta a Pagar' se o usuário não tiver mudado
+              tipo: formData.tipo, 
               categoria: formData.categoria,
               data: p.data,
               detalhes_pagamento: { ...detalhesBase, metodos: [{ metodo: 'Parcelado', valor: Number(p.valor) }] }
           }));
-          
           const { error } = await supabase.from('transacoes').insert(payloadBatch);
           if (error) throw error;
-      
-      // MODO 2: Salvar/Editar Único
       } else {
           const valorTotal = itensPagamento.reduce((acc, item) => acc + (Number(item.valor) || 0), 0);
           const payload = { 
@@ -207,7 +195,7 @@ export default function Financeiro() {
     } catch { addToast('Erro ao salvar.', 'error'); }
   }
 
-  // --- RENDERIZAÇÃO ---
+  // --- CÁLCULOS E FILTROS ---
 
   const transacoesFiltradas = transacoes.filter(t => {
     let matchTurma = filtroTurma === 'Geral' ? true : filtroTurma === 'Loja' ? t.categoria === 'Venda Loja' : (t.tipo === 'Receita' && t.alunos) ? t.alunos.categoria === filtroTurma : false;
@@ -217,6 +205,28 @@ export default function Financeiro() {
 
   const resumo = transacoesFiltradas.reduce((acc, t) => { const val = Number(t.valor); if (t.tipo === 'Receita') acc.receitas += val; else acc.despesas += val; return acc; }, { receitas: 0, despesas: 0 });
   
+  // LÓGICA DE DETALHAMENTO DE PAGAMENTO (RESTAURADO)
+  const detalhamento = transacoesFiltradas.reduce((acc, t) => {
+    if (t.tipo !== 'Receita') return acc;
+    
+    if (t.detalhes_pagamento?.metodos && Array.isArray(t.detalhes_pagamento.metodos)) {
+        t.detalhes_pagamento.metodos.forEach((m: any) => {
+            const v = Number(m.valor);
+            if (m.metodo === 'Dinheiro') acc.dinheiro += v; 
+            else if (m.metodo === 'Pix') acc.pix += v; 
+            else if (m.metodo === 'Cartao') acc.credito += v; 
+            else if (m.metodo === 'Debito') acc.debito += v;
+        });
+    } else if (t.detalhes_pagamento?.pagamento) {
+        const pag = t.detalhes_pagamento.pagamento; const v = Number(t.valor);
+        if (pag.metodo === 'Dinheiro') acc.dinheiro += v; 
+        else if (pag.metodo === 'Pix') acc.pix += v; 
+        else if (pag.metodo === 'Cartao') { if (pag.tipo === 'Débito') acc.debito += v; else acc.credito += v; }
+    }
+    return acc;
+  }, { dinheiro: 0, pix: 0, credito: 0, debito: 0 });
+
+  // Helpers UI
   const hoje = new Date();
   const amanha = addDays(hoje, 1);
   const temNotificacao = contasPagar.some(c => {
@@ -231,10 +241,21 @@ export default function Financeiro() {
       return 'bg-green-50 border-green-100 text-green-600'; 
   }
 
-  // CARD MOBILE
+  // Componente MiniCard de Método (RESTAURADO)
+  const MiniCard = ({ label, value, icon: Icon, colorClass }: any) => (
+      <div className={`flex items-center gap-3 p-3 rounded-2xl border border-opacity-50 bg-white shadow-sm ${colorClass}`}>
+          <div className="p-2.5 rounded-xl bg-white bg-opacity-60">
+            <Icon size={18}/>
+          </div>
+          <div>
+            <p className="text-[10px] uppercase font-bold opacity-70">{label}</p>
+            <p className="font-bold text-lg">{value}</p>
+          </div>
+      </div>
+  );
+
   const TransactionCard = ({ t, isConta = false }: { t: Transacao, isConta?: boolean }) => {
       const statusColor = isConta ? getStatusColor(t.data) : (t.tipo === 'Receita' ? 'text-green-600' : 'text-red-600');
-      
       return (
           <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm mb-3 flex flex-col gap-3">
               <div className="flex justify-between items-start">
@@ -247,7 +268,6 @@ export default function Financeiro() {
                       {!isConta && (t.tipo === 'Receita' ? '+' : '-')} R$ {Number(t.valor).toFixed(2)}
                   </div>
               </div>
-              
               <div className="flex items-center justify-between pt-3 border-t border-slate-50">
                   <div className={`flex items-center gap-2 text-sm font-medium ${isConta ? (statusColor.includes('red') ? 'text-red-600' : statusColor.includes('yellow') ? 'text-yellow-600' : 'text-slate-500') : 'text-slate-500'}`}>
                       <Calendar size={16}/> {format(parseISO(t.data), 'dd/MM/yy')}
@@ -255,7 +275,6 @@ export default function Financeiro() {
                           {statusColor.includes('red') ? 'Vencida' : statusColor.includes('yellow') ? 'Hoje' : 'Em Aberto'}
                       </span>}
                   </div>
-                  
                   <div className="flex gap-2">
                       {isConta && (
                           <button onClick={() => setCustomAlert({show: true, title: 'Confirmar Pagamento', message: `Deseja baixar "${t.descricao}"? Ela será movida para o Extrato como Despesa realizada.`, type: 'success', onConfirm: () => handleBaixarConta(t)})} className="p-2 rounded-xl bg-green-50 text-green-600 active:scale-95 transition-transform"><CheckCircle size={20}/></button>
@@ -288,7 +307,6 @@ export default function Financeiro() {
               </div>
           </div>
 
-          {/* BARRA DE AÇÕES */}
           <div className="flex flex-col md:flex-row gap-3 items-center justify-between">
               {view === 'extrato' ? (
                 <div className="flex gap-2 overflow-x-auto w-full md:w-auto pb-2 md:pb-0 no-scrollbar">
@@ -315,6 +333,14 @@ export default function Financeiro() {
                 <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm"><div className="flex justify-between mb-1"><span className="text-slate-400 text-xs font-bold uppercase">Entradas</span><div className="p-1.5 bg-green-50 rounded-lg text-green-600"><TrendingUp size={16}/></div></div><h3 className="text-2xl font-black text-slate-800">R$ {resumo.receitas.toFixed(2)}</h3></div>
                 <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm"><div className="flex justify-between mb-1"><span className="text-slate-400 text-xs font-bold uppercase">Saídas (Pagas)</span><div className="p-1.5 bg-red-50 rounded-lg text-red-600"><TrendingDown size={16}/></div></div><h3 className="text-2xl font-black text-slate-800">R$ {resumo.despesas.toFixed(2)}</h3></div>
                 <div className={`bg-white p-5 rounded-2xl border-l-4 shadow-sm ${resumo.receitas - resumo.despesas >= 0 ? 'border-blue-500' : 'border-red-500'}`}><div className="flex justify-between mb-1"><span className="text-slate-400 text-xs font-bold uppercase">Saldo em Caixa</span><div className="p-1.5 bg-slate-100 rounded-lg text-slate-600"><DollarSign size={16}/></div></div><h3 className={`text-2xl font-black ${resumo.receitas - resumo.despesas >= 0 ? 'text-blue-600' : 'text-red-600'}`}>R$ {(resumo.receitas - resumo.despesas).toFixed(2)}</h3></div>
+            </div>
+
+            {/* MINI CARDS DE MÉTODOS (RESTAURADO) */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <MiniCard label="Dinheiro" value={`R$ ${detalhamento.dinheiro.toFixed(0)}`} icon={Banknote} colorClass="border-green-200 bg-green-50 text-green-700" />
+                <MiniCard label="Pix" value={`R$ ${detalhamento.pix.toFixed(0)}`} icon={QrCode} colorClass="border-teal-200 bg-teal-50 text-teal-700" />
+                <MiniCard label="Crédito" value={`R$ ${detalhamento.credito.toFixed(0)}`} icon={CreditCard} colorClass="border-blue-200 bg-blue-50 text-blue-700" />
+                <MiniCard label="Débito" value={`R$ ${detalhamento.debito.toFixed(0)}`} icon={CreditCard} colorClass="border-indigo-200 bg-indigo-50 text-indigo-700" />
             </div>
 
             {/* LISTA MOBILE (CARDS) */}
