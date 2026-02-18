@@ -20,7 +20,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (page: string) =
       const inicioMes = startOfMonth(hoje).toISOString();
       const fimMes = endOfMonth(hoje).toISOString();
 
-      // IGNORA TUDO QUE É PENDENTE (FIADO)
+      // Buscamos tudo que não é Pendente
       const { data: transacoes } = await supabase.from('transacoes').select('*').gte('data', inicioMes).lte('data', fimMes).neq('tipo', 'Pendente');
       const { data: pagamentosInstrutores } = await supabase.from('pagamentos_instrutores').select('valor_pago').eq('mes_referencia', hoje.toISOString().slice(0, 7));
       const { data: alunos } = await supabase.from('alunos').select('*');
@@ -31,9 +31,11 @@ export default function Dashboard({ onNavigate }: { onNavigate: (page: string) =
 
       transacoes?.forEach(t => {
         const valor = Number(t.valor);
+        
+        // CORREÇÃO AQUI: Só processa se for Receita ou Despesa REAL
         if (t.tipo === 'Receita') {
             receita += valor;
-            // Soma métodos (igual ao financeiro)
+            // Soma métodos
             if (t.detalhes_pagamento?.metodos) {
                 t.detalhes_pagamento.metodos.forEach((m: any) => {
                     const v = Number(m.valor);
@@ -43,7 +45,12 @@ export default function Dashboard({ onNavigate }: { onNavigate: (page: string) =
                 const pag = t.detalhes_pagamento.pagamento;
                 if (pag.metodo === 'Dinheiro') pDinheiro += valor; else if (pag.metodo === 'Pix') pPix += valor; else if (pag.metodo === 'Cartao') { if (pag.tipo === 'Débito') pDebito += valor; else pCredito += valor; }
             }
-        } else { despesas += valor; }
+        } 
+        // Só soma na despesa se o tipo for EXATAMENTE 'Despesa'. 
+        // 'Conta a Pagar' é ignorado aqui.
+        else if (t.tipo === 'Despesa') { 
+            despesas += valor; 
+        }
       });
 
       const totalCadastrados = alunos?.length || 0;
