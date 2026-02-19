@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">BJJ College - Islan Leite</string>
+    <string name="title_activity_main">BJJ College - Islan Leite</string>
+    <string name="package_name">com.bjjcollege.app</string>
+    <string name="custom_url_scheme">com.bjjcollege.app</string>
+</resources>
