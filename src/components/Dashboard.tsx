@@ -1,28 +1,26 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { TrendingUp, TrendingDown, Wallet, Calendar, HandCoins, Users, Banknote, QrCode, CreditCard } from 'lucide-react';
-import { format, startOfMonth, endOfMonth } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
 export default function Dashboard({ onNavigate }: { onNavigate: (page: string) => void }) {
   const [loading, setLoading] = useState(true);
+  const [mesSelecionado, setMesSelecionado] = useState(format(new Date(), 'yyyy-MM'));
   const [stats, setStats] = useState({
     receitaBruta: 0, totalComissoes: 0, despesas: 0, saldoLiquido: 0, totalAlunos: 0, alunosPagantes: 0, alunosInadimplentes: 0,
     pagtoDinheiro: 0, pagtoPix: 0, pagtoCredito: 0, pagtoDebito: 0
   });
 
-  useEffect(() => { fetchDashboardData(); }, []);
+  useEffect(() => { fetchDashboardData(); }, [mesSelecionado]);
 
   async function fetchDashboardData() {
     try {
       setLoading(true);
-      const hoje = new Date();
-      const inicioMes = startOfMonth(hoje).toISOString();
-      const fimMes = endOfMonth(hoje).toISOString();
+      const targetRef = format(parseISO(`${mesSelecionado}-01`), 'MM/yyyy'); // Ex: '03/2026'
 
-      // Buscamos tudo que não é Pendente
-      const { data: transacoes } = await supabase.from('transacoes').select('*').gte('data', inicioMes).lte('data', fimMes).neq('tipo', 'Pendente');
-      const { data: pagamentosInstrutores } = await supabase.from('pagamentos_instrutores').select('valor_pago').eq('mes_referencia', hoje.toISOString().slice(0, 7));
+      const { data: transacoes } = await supabase.from('transacoes').select('*').neq('tipo', 'Pendente');
+      const { data: pagamentosInstrutores } = await supabase.from('pagamentos_instrutores').select('valor_pago').eq('mes_referencia', mesSelecionado);
       const { data: alunos } = await supabase.from('alunos').select('*');
 
       let receita = 0; let despesas = 0;
@@ -30,12 +28,14 @@ export default function Dashboard({ onNavigate }: { onNavigate: (page: string) =
       const totalComissoesPagas = pagamentosInstrutores?.reduce((acc, p) => acc + Number(p.valor_pago), 0) || 0;
 
       transacoes?.forEach(t => {
+        // FILTRO MÁGICO: Verifica se a transação pertence ao mês selecionado
+        const ref = t.mes_referencia || format(parseISO(t.data), 'MM/yyyy');
+        if (ref !== targetRef) return; 
+
         const valor = Number(t.valor);
         
-        // CORREÇÃO AQUI: Só processa se for Receita ou Despesa REAL
         if (t.tipo === 'Receita') {
             receita += valor;
-            // Soma métodos
             if (t.detalhes_pagamento?.metodos) {
                 t.detalhes_pagamento.metodos.forEach((m: any) => {
                     const v = Number(m.valor);
@@ -45,16 +45,14 @@ export default function Dashboard({ onNavigate }: { onNavigate: (page: string) =
                 const pag = t.detalhes_pagamento.pagamento;
                 if (pag.metodo === 'Dinheiro') pDinheiro += valor; else if (pag.metodo === 'Pix') pPix += valor; else if (pag.metodo === 'Cartao') { if (pag.tipo === 'Débito') pDebito += valor; else pCredito += valor; }
             }
-        } 
-        // Só soma na despesa se o tipo for EXATAMENTE 'Despesa'. 
-        // 'Conta a Pagar' é ignorado aqui.
-        else if (t.tipo === 'Despesa') { 
+        } else if (t.tipo === 'Despesa') { 
             despesas += valor; 
         }
       });
 
       const totalCadastrados = alunos?.length || 0;
-      const pagantesIds = new Set(transacoes?.filter(t => t.tipo === 'Receita' && t.aluno_id).map(t => t.aluno_id));
+      // Pagantes do mês específico
+      const pagantesIds = new Set(transacoes?.filter(t => t.tipo === 'Receita' && t.aluno_id && (t.mes_referencia || format(parseISO(t.data), 'MM/yyyy')) === targetRef).map(t => t.aluno_id));
       const pagantesReais = alunos?.filter(a => pagantesIds.has(a.id) || (a.bolsista_jiujitsu && a.bolsista_musculacao)).length || 0;
 
       setStats({
@@ -65,7 +63,6 @@ export default function Dashboard({ onNavigate }: { onNavigate: (page: string) =
     } catch (error) { console.error('Erro dashboard:', error); } finally { setLoading(false); }
   }
 
-  // Cards Visuais (Mantidos iguais)
   const Card = ({ title, value, icon: Icon, color, subtext }: any) => {
     const bgClass = color.includes('600') ? color.replace('text-', 'bg-').replace('600', '100') : color.replace('text-', 'bg-').replace('500', '100');
     return (<div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex items-start justify-between relative overflow-hidden group hover:shadow-md transition-all"><div className={`absolute -right-6 -top-6 opacity-5 p-4 rounded-full ${color.replace('text-', 'bg-')} transition-transform group-hover:scale-110`}><Icon size={100} /></div><div><p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-2">{title}</p><h3 className={`text-2xl sm:text-3xl font-bold ${color}`}>{value}</h3>{subtext && <p className="text-xs text-slate-400 mt-1">{subtext}</p>}</div><div className={`p-3 rounded-xl ${bgClass} ${color}`}><Icon size={24} /></div></div>);
@@ -82,12 +79,26 @@ export default function Dashboard({ onNavigate }: { onNavigate: (page: string) =
 
   return (
     <div className="space-y-6 animate-fadeIn pb-20">
-      <div><h2 className="text-2xl font-bold text-slate-800">Visão Geral</h2><p className="text-slate-500 text-sm flex items-center gap-1"><Calendar size={14}/> {format(new Date(), "MMMM 'de' yyyy", { locale: ptBR })}</p></div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"><Card title="Receita Bruta" value={`R$ ${stats.receitaBruta.toFixed(2)}`} icon={TrendingUp} color="text-green-600" subtext="Entradas Reais" /><Card title="Comissões Pagas" value={`R$ ${stats.totalComissoes.toFixed(2)}`} icon={HandCoins} color="text-orange-600" subtext="Repasse efetivado" /><Card title="Despesas" value={`R$ ${stats.despesas.toFixed(2)}`} icon={TrendingDown} color="text-red-600" subtext="Custos operacionais" /><Card title="Saldo Líquido" value={`R$ ${stats.saldoLiquido.toFixed(2)}`} icon={Wallet} color={stats.saldoLiquido >= 0 ? "text-blue-600" : "text-red-600"} subtext="Lucro Real (Livre)" /></div>
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div>
+            <h2 className="text-2xl font-bold text-slate-800">Visão Geral</h2>
+            <p className="text-slate-500 text-sm flex items-center gap-1">Acompanhe a saúde financeira</p>
+        </div>
+        <div className="flex items-center gap-2 bg-white p-2 rounded-2xl border border-slate-200 shadow-sm w-full md:w-auto">
+            <Calendar className="text-blue-500 ml-2" size={20} />
+            <input 
+                type="month" 
+                value={mesSelecionado}
+                onChange={(e) => setMesSelecionado(e.target.value)}
+                className="bg-transparent border-none focus:ring-0 font-bold text-slate-700 w-full"
+            />
+        </div>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"><Card title="Receita Bruta" value={`R$ ${stats.receitaBruta.toFixed(2)}`} icon={TrendingUp} color="text-green-600" subtext="Entradas do Mês" /><Card title="Comissões Pagas" value={`R$ ${stats.totalComissoes.toFixed(2)}`} icon={HandCoins} color="text-orange-600" subtext="Repasse efetivado" /><Card title="Despesas" value={`R$ ${stats.despesas.toFixed(2)}`} icon={TrendingDown} color="text-red-600" subtext="Custos operacionais" /><Card title="Saldo Líquido" value={`R$ ${stats.saldoLiquido.toFixed(2)}`} icon={Wallet} color={stats.saldoLiquido >= 0 ? "text-blue-600" : "text-red-600"} subtext="Lucro Real (Livre)" /></div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"><MiniCardPagamento titulo="Dinheiro" valor={`R$ ${stats.pagtoDinheiro.toFixed(2)}`} icon={Banknote} corBg="bg-green-50 border-green-100" corTexto="text-green-700" /><MiniCardPagamento titulo="Pix" valor={`R$ ${stats.pagtoPix.toFixed(2)}`} icon={QrCode} corBg="bg-teal-50 border-teal-100" corTexto="text-teal-700" /><MiniCardPagamento titulo="Crédito" valor={`R$ ${stats.pagtoCredito.toFixed(2)}`} icon={CreditCard} corBg="bg-blue-50 border-blue-100" corTexto="text-blue-700" /><MiniCardPagamento titulo="Débito" valor={`R$ ${stats.pagtoDebito.toFixed(2)}`} icon={CreditCard} corBg="bg-indigo-50 border-indigo-100" corTexto="text-indigo-700" /></div>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-slate-100 shadow-sm"><h3 className="font-bold text-slate-800 mb-6">Distribuição Financeira</h3>{stats.receitaBruta > 0 ? (<GraficoPizza />) : (<div className="h-48 flex items-center justify-center text-slate-400 text-sm bg-slate-50 rounded-xl">Sem dados financeiros suficientes.</div>)}</div>
-          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6 flex flex-col"><h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2"><Users className="text-slate-900"/> Resumo Alunos</h3><div className="flex-1 space-y-8"><div><div className="flex justify-between items-end mb-2"><span className="text-sm font-medium text-slate-500">Total Matriculados</span><span className="text-2xl font-bold text-slate-800">{stats.totalAlunos}</span></div><div className="w-full bg-slate-100 h-2 rounded-full"><div className="bg-slate-800 h-full rounded-full" style={{ width: '100%' }}></div></div></div><div><div className="flex justify-between items-end mb-2"><span className="text-sm font-medium text-green-600">Pagamento em Dia</span><span className="text-xl font-bold text-green-700">{pctPagantes}%</span></div><div className="w-full bg-green-100 h-2 rounded-full"><div className="bg-green-500 h-full rounded-full" style={{ width: `${pctPagantes}%` }}></div></div></div><div><div className="flex justify-between items-end mb-2"><span className="text-sm font-medium text-red-600">Pendentes</span><span className="text-xl font-bold text-red-700">{100 - Number(pctPagantes)}%</span></div><div className="w-full bg-red-100 h-2 rounded-full"><div className="bg-red-500 h-full rounded-full" style={{ width: `${100 - Number(pctPagantes)}%` }}></div></div><p className="text-xs text-slate-400 mt-2 text-right">{stats.alunosInadimplentes} alunos pendentes</p></div></div></div>
+          <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-slate-100 shadow-sm"><h3 className="font-bold text-slate-800 mb-6">Distribuição Financeira</h3>{stats.receitaBruta > 0 ? (<GraficoPizza />) : (<div className="h-48 flex items-center justify-center text-slate-400 text-sm bg-slate-50 rounded-xl">Sem dados financeiros suficientes neste mês.</div>)}</div>
+          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6 flex flex-col"><h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2"><Users className="text-slate-900"/> Resumo Alunos</h3><div className="flex-1 space-y-8"><div><div className="flex justify-between items-end mb-2"><span className="text-sm font-medium text-slate-500">Total Matriculados</span><span className="text-2xl font-bold text-slate-800">{stats.totalAlunos}</span></div><div className="w-full bg-slate-100 h-2 rounded-full"><div className="bg-slate-800 h-full rounded-full" style={{ width: '100%' }}></div></div></div><div><div className="flex justify-between items-end mb-2"><span className="text-sm font-medium text-green-600">Pagamento em Dia</span><span className="text-xl font-bold text-green-700">{pctPagantes}%</span></div><div className="w-full bg-green-100 h-2 rounded-full"><div className="bg-green-500 h-full rounded-full" style={{ width: `${pctPagantes}%` }}></div></div></div><div><div className="flex justify-between items-end mb-2"><span className="text-sm font-medium text-red-600">Pendentes</span><span className="text-xl font-bold text-red-700">{100 - Number(pctPagantes)}%</span></div><div className="w-full bg-red-100 h-2 rounded-full"><div className="bg-red-500 h-full rounded-full" style={{ width: `${100 - Number(pctPagantes)}%` }}></div></div><p className="text-xs text-slate-400 mt-2 text-right">{stats.alunosInadimplentes} alunos pendentes neste mês</p></div></div></div>
       </div>
     </div>
   );

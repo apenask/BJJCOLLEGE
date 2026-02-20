@@ -1,38 +1,47 @@
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { FileText, Printer, Search, Calendar, Banknote, QrCode, CreditCard, Download, FileSpreadsheet, MessageCircle, Copy, X, Share2 } from 'lucide-react';
-import { format } from 'date-fns';
-import { useToast } from '../contexts/ToastContext';
+import { format, parseISO } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
+import { useToast } from '../contexts/ToastContext'; 
 
 export default function Relatorios() {
   const { addToast } = useToast();
   const [loading, setLoading] = useState(false);
+  
+  // OS 3 FILTROS QUE VOCÊ PEDIU
+  const [mesSelecionado, setMesSelecionado] = useState(format(new Date(), 'yyyy-MM'));
   const [dataInicio, setDataInicio] = useState(new Date().toISOString().slice(0, 8) + '01');
   const [dataFim, setDataFim] = useState(new Date().toISOString().slice(0, 10));
+  
   const [filtroTurma, setFiltroTurma] = useState<'Geral' | 'Adulto' | 'Infantil' | 'Kids' | 'Loja'>('Geral');
   const [resultado, setResultado] = useState<any[] | null>(null);
   const [totais, setTotais] = useState({ dinheiro: 0, pix: 0, credito: 0, debito: 0, fiado: 0, outros: 0, totalReceita: 0, totalDespesa: 0 });
 
-  // Estado para o Modal de Texto/WhatsApp
   const [showModalTexto, setShowModalTexto] = useState(false);
   const [textoRelatorio, setTextoRelatorio] = useState('');
 
   async function gerarRelatorio() {
     setLoading(true);
     try {
-      // CORREÇÃO DEFINITIVA: Filtramos direto no banco (.neq)
-      // Trazemos apenas o que NÃO for Pendente e NÃO for Conta a Pagar
-      const { data: transacoes } = await supabase
-        .from('transacoes')
-        .select(`*, alunos (nome, categoria)`)
-        .gte('data', dataInicio)
-        .lte('data', dataFim)
-        .neq('tipo', 'Pendente')        // BLINDAGEM 1: Remove Fiado/Pendente na fonte
-        .neq('tipo', 'Conta a Pagar')   // BLINDAGEM 2: Remove Contas Futuras na fonte
-        .order('data', { ascending: true });
+      const targetRef = format(parseISO(`${mesSelecionado}-01`), 'MM/yyyy');
       
-      // Filtro local apenas para categorias (Turmas/Loja)
+      // 1. Puxa do banco APENAS as transações que foram pagas no período de dias selecionado (Data Início até Data Fim)
+      const { data: transacoes } = await supabase
+          .from('transacoes')
+          .select(`*, alunos (nome, categoria)`)
+          .gte('data', dataInicio)
+          .lte('data', dataFim)
+          .order('data', { ascending: true });
+      
       const filtrados = transacoes?.filter(t => {
+        // Ignora contas a pagar e loja fiado
+        if (t.tipo === 'Conta a Pagar' || t.tipo === 'Pendente') return false; 
+        
+        // 2. FILTRO MÁGICO: Só deixa passar se a transação for uma "conta daquele mês" que você escolheu
+        const ref = t.mes_referencia || format(parseISO(t.data), 'MM/yyyy');
+        if (ref !== targetRef) return false;
+
         if (filtroTurma === 'Geral') return true;
         if (filtroTurma === 'Loja') return t.categoria === 'Venda Loja';
         if (t.tipo === 'Receita' && t.alunos) return t.alunos.categoria === filtroTurma;
@@ -41,12 +50,7 @@ export default function Relatorios() {
       
       processarTotais(filtrados);
       setResultado(filtrados);
-    } catch (error) { 
-        console.error(error); 
-        addToast('Erro ao gerar relatório', 'error');
-    } finally { 
-        setLoading(false); 
-    }
+    } catch (error) { console.error(error); } finally { setLoading(false); }
   }
 
   function processarTotais(lista: any[]) {
@@ -55,14 +59,13 @@ export default function Relatorios() {
           const valor = Number(t.valor);
           if (t.tipo === 'Despesa') { desp += valor; return; }
           
-          // Se passou daqui, é Receita CONFIRMADA
           rec += valor;
           if (t.detalhes_pagamento) {
               const dp = t.detalhes_pagamento;
               if (dp.metodos && Array.isArray(dp.metodos)) {
                   dp.metodos.forEach((m: any) => {
                       const v = Number(m.valor);
-                      if (m.metodo === 'Dinheiro') d += v; else if (m.metodo === 'Pix') p += v; else if (m.metodo === 'Cartao') c += v; else o += v;
+                      if (m.metodo === 'Dinheiro') d += v; else if (m.metodo === 'Pix') p += v; else if (m.metodo === 'Cartao') c += v; else if (m.metodo === 'Debito') db += v; else o += v;
                   });
               } else if (dp.pagamento) {
                   const pag = dp.pagamento;
@@ -86,12 +89,14 @@ export default function Relatorios() {
     return '-';
   }
 
-  // --- GERADOR DE TEXTO WHATSAPP ---
   function abrirModalTexto() {
       if (!resultado) return;
 
+      const nomeMes = format(parseISO(`${mesSelecionado}-01`), 'MMMM/yyyy', { locale: ptBR });
+
       const texto = `🥋 *RELATÓRIO FINANCEIRO - BJJ COLLEGE*
-📅 *Período:* ${format(new Date(dataInicio), 'dd/MM')} a ${format(new Date(dataFim), 'dd/MM/yyyy')}
+🗓️ *Ref. Mensalidades:* ${nomeMes.toUpperCase()}
+📅 *Pagos entre:* ${format(parseISO(dataInicio), 'dd/MM')} a ${format(parseISO(dataFim), 'dd/MM')}
 📂 *Filtro:* ${filtroTurma}
 
 💰 *RESUMO GERAL*
@@ -124,32 +129,33 @@ export default function Relatorios() {
       window.open(url, '_blank');
   }
 
-  // EXCEL
   function exportarExcel() {
     if (!resultado) return;
+    const nomeMes = format(parseISO(`${mesSelecionado}-01`), 'MMMM/yyyy', { locale: ptBR });
     let tableHTML = `
       <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
       <head><meta charset="UTF-8"></head>
       <body>
       <h2>Relatório Financeiro - BJJ College</h2>
-      <p>Período: ${format(new Date(dataInicio), 'dd/MM/yyyy')} a ${format(new Date(dataFim), 'dd/MM/yy')}</p>
+      <p>Ref. Mensalidades: ${nomeMes.toUpperCase()}</p>
+      <p>Pagos de: ${format(parseISO(dataInicio), 'dd/MM/yyyy')} até ${format(parseISO(dataFim), 'dd/MM/yyyy')}</p>
       <p>Filtro: ${filtroTurma}</p>
       <br/>
       <table border="1">
         <thead>
-          <tr style="background-color: #f0f0f0;"><th>Data</th><th>Descrição</th><th>Categoria</th><th>Pagamento</th><th>Entrada</th><th>Saída</th></tr>
+          <tr style="background-color: #f0f0f0;"><th>Data Recebimento</th><th>Descrição</th><th>Categoria</th><th>Pagamento</th><th>Entrada</th><th>Saída</th></tr>
         </thead>
         <tbody>
     `;
     resultado.forEach(t => {
        const entrada = t.tipo === 'Receita' ? Number(t.valor).toFixed(2).replace('.', ',') : '';
        const saida = t.tipo === 'Despesa' ? Number(t.valor).toFixed(2).replace('.', ',') : '';
-       tableHTML += `<tr><td>${format(new Date(t.data), 'dd/MM/yyyy')}</td><td>${t.descricao} ${t.alunos ? `(${t.alunos.nome})` : ''}</td><td>${t.categoria}</td><td>${renderFormaPagamento(t)}</td><td style="color: green;">${entrada}</td><td style="color: red;">${saida}</td></tr>`;
+       tableHTML += `<tr><td>${format(parseISO(t.data), 'dd/MM/yyyy')}</td><td>${t.descricao} ${t.alunos ? `(${t.alunos.nome})` : ''}</td><td>${t.categoria}</td><td>${renderFormaPagamento(t)}</td><td style="color: green;">${entrada}</td><td style="color: red;">${saida}</td></tr>`;
     });
     tableHTML += `</tbody><tfoot><tr style="background-color: #e0e0e0; font-weight: bold;"><td colspan="4">TOTAIS</td><td>R$ ${totais.totalReceita.toFixed(2).replace('.', ',')}</td><td>R$ ${totais.totalDespesa.toFixed(2).replace('.', ',')}</td></tr></tfoot></table></body></html>`;
     const blob = new Blob([tableHTML], { type: 'application/vnd.ms-excel' });
     const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = `Relatorio_${filtroTurma}_${dataInicio}.xls`; a.click();
+    const a = document.createElement('a'); a.href = url; a.download = `Relatorio_${filtroTurma}_${mesSelecionado}.xls`; a.click();
   }
 
   return (
@@ -160,56 +166,78 @@ export default function Relatorios() {
 
       <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 print:hidden space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div><label className="text-sm font-bold text-slate-500">Início</label><input type="date" value={dataInicio} onChange={e => setDataInicio(e.target.value)} className="w-full p-2 border rounded-lg" /></div>
-              <div><label className="text-sm font-bold text-slate-500">Fim</label><input type="date" value={dataFim} onChange={e => setDataFim(e.target.value)} className="w-full p-2 border rounded-lg" /></div>
               <div>
-                  <label className="text-sm font-bold text-slate-500">Categoria</label>
-                  <select value={filtroTurma} onChange={e => setFiltroTurma(e.target.value as any)} className="w-full p-2 border rounded-lg">
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Mensalidade (Ref)</label>
+                  <input type="month" value={mesSelecionado} onChange={e => setMesSelecionado(e.target.value)} className="w-full p-3 mt-1 border rounded-xl text-slate-700 font-bold focus:ring-2 focus:ring-blue-500 outline-none" />
+              </div>
+              <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Pagos A Partir De</label>
+                  <input type="date" value={dataInicio} onChange={e => setDataInicio(e.target.value)} className="w-full p-3 mt-1 border rounded-xl text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none" />
+              </div>
+              <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Pagos Até</label>
+                  <input type="date" value={dataFim} onChange={e => setDataFim(e.target.value)} className="w-full p-3 mt-1 border rounded-xl text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none" />
+              </div>
+              <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Categoria / Turma</label>
+                  <select value={filtroTurma} onChange={e => setFiltroTurma(e.target.value as any)} className="w-full p-3 mt-1 border rounded-xl font-bold text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none">
                       <option value="Geral">Geral (Tudo)</option><option value="Adulto">Turma Adulto</option><option value="Infantil">Turma Infantil</option><option value="Kids">Turma Kids</option><option value="Loja">Vendas Loja</option>
                   </select>
               </div>
-              <div className="flex items-end"><button onClick={gerarRelatorio} className="w-full bg-slate-900 text-white py-2.5 rounded-lg font-bold hover:bg-slate-800 flex items-center justify-center gap-2">{loading ? '...' : <><Search size={18} /> Gerar</>}</button></div>
+          </div>
+          <div className="flex justify-end pt-2">
+              <button onClick={gerarRelatorio} className="w-full md:w-auto bg-slate-900 text-white px-8 py-4 rounded-xl font-black uppercase tracking-widest hover:bg-slate-800 flex items-center justify-center gap-2 shadow-lg shadow-slate-200 active:scale-95 transition-transform">
+                  {loading ? 'Gerando...' : <><Search size={20} /> Gerar Relatório</>}
+              </button>
           </div>
       </div>
 
       {resultado && (
-          <div className="bg-white p-8 rounded-xl shadow-sm border border-slate-100 print:border-none print:shadow-none print:p-0">
+          <div className="bg-white p-8 rounded-xl shadow-sm border border-slate-100 print:border-none print:shadow-none print:p-0 animate-slideUp">
               <div className="mb-6 border-b pb-4 flex flex-col md:flex-row justify-between items-start gap-4">
-                  <div><h1 className="text-3xl font-bold text-slate-900">BJJ COLLEGE</h1><p className="text-slate-500">Relatório: <span className="font-bold uppercase">{filtroTurma}</span></p></div>
+                  <div>
+                      <h1 className="text-3xl font-black text-slate-900 tracking-tighter">BJJ COLLEGE</h1>
+                      <p className="text-slate-500 text-sm mt-1">
+                          Ref. Mensalidade: <span className="font-bold text-slate-800 uppercase">{format(parseISO(`${mesSelecionado}-01`), 'MMMM/yyyy', { locale: ptBR })}</span>
+                      </p>
+                      <p className="text-slate-500 text-xs">
+                          Período de Recebimento: {format(parseISO(dataInicio), 'dd/MM/yyyy')} a {format(parseISO(dataFim), 'dd/MM/yyyy')}
+                      </p>
+                  </div>
                   <div className="text-right print:hidden flex flex-wrap gap-2 mt-2 w-full md:w-auto">
-                      <button onClick={abrirModalTexto} className="bg-green-500 text-white px-4 py-2 rounded-lg font-bold hover:bg-green-600 flex items-center gap-2 text-sm shadow-sm flex-1 md:flex-none justify-center"><MessageCircle size={16}/> Relatório WhatsApp</button>
-                      <button onClick={exportarExcel} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-blue-700 flex items-center gap-2 text-sm shadow-sm flex-1 md:flex-none justify-center"><FileSpreadsheet size={16}/> Excel</button>
-                      <button onClick={() => window.print()} className="bg-slate-800 text-white px-4 py-2 rounded-lg font-bold hover:bg-slate-900 flex items-center gap-2 text-sm shadow-sm flex-1 md:flex-none justify-center"><Printer size={16}/> Imprimir</button>
+                      <button onClick={abrirModalTexto} className="bg-green-500 text-white px-4 py-2 rounded-xl font-bold hover:bg-green-600 flex items-center gap-2 text-sm shadow-sm flex-1 md:flex-none justify-center"><MessageCircle size={16}/> Resumo no Zap</button>
+                      <button onClick={exportarExcel} className="bg-blue-600 text-white px-4 py-2 rounded-xl font-bold hover:bg-blue-700 flex items-center gap-2 text-sm shadow-sm flex-1 md:flex-none justify-center"><FileSpreadsheet size={16}/> Baixar Excel</button>
+                      <button onClick={() => window.print()} className="bg-slate-800 text-white px-4 py-2 rounded-xl font-bold hover:bg-slate-900 flex items-center gap-2 text-sm shadow-sm flex-1 md:flex-none justify-center"><Printer size={16}/> Imprimir</button>
                   </div>
               </div>
 
               {/* TOTAIS */}
               <div className="grid grid-cols-3 gap-4 mb-8">
-                  <div className="p-4 bg-green-50 rounded-lg border border-green-100"><p className="text-xs text-green-700 uppercase font-bold">Total Receitas</p><p className="text-2xl font-bold text-green-700">R$ {totais.totalReceita.toFixed(2)}</p></div>
-                  <div className="p-4 bg-red-50 rounded-lg border border-red-100"><p className="text-xs text-red-700 uppercase font-bold">Total Despesas</p><p className="text-2xl font-bold text-red-700">R$ {totais.totalDespesa.toFixed(2)}</p></div>
-                  <div className={`p-4 rounded-lg border ${totais.totalReceita - totais.totalDespesa >= 0 ? 'bg-blue-50 border-blue-100 text-blue-700' : 'bg-orange-50 border-orange-100 text-orange-700'}`}><p className="text-xs uppercase font-bold">Saldo Líquido</p><p className="text-2xl font-bold">R$ {(totais.totalReceita - totais.totalDespesa).toFixed(2)}</p></div>
+                  <div className="p-4 bg-green-50 rounded-2xl border border-green-100"><p className="text-[10px] text-green-700 uppercase font-bold tracking-widest mb-1">Total Receitas</p><p className="text-2xl md:text-3xl font-black text-green-700">R$ {totais.totalReceita.toFixed(2)}</p></div>
+                  <div className="p-4 bg-red-50 rounded-2xl border border-red-100"><p className="text-[10px] text-red-700 uppercase font-bold tracking-widest mb-1">Total Despesas</p><p className="text-2xl md:text-3xl font-black text-red-700">R$ {totais.totalDespesa.toFixed(2)}</p></div>
+                  <div className={`p-4 rounded-2xl border ${totais.totalReceita - totais.totalDespesa >= 0 ? 'bg-blue-50 border-blue-100 text-blue-700' : 'bg-orange-50 border-orange-100 text-orange-700'}`}><p className="text-[10px] uppercase font-bold tracking-widest mb-1">Saldo Líquido</p><p className="text-2xl md:text-3xl font-black">R$ {(totais.totalReceita - totais.totalDespesa).toFixed(2)}</p></div>
               </div>
 
               <div className="mb-8">
-                  <h3 className="font-bold text-slate-800 mb-3 text-sm uppercase border-b border-slate-100 pb-1">Detalhamento</h3>
-                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-                      <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 flex flex-col"><span className="text-xs text-slate-500 flex items-center gap-1"><Banknote size={12}/> Dinheiro</span><span className="font-bold text-slate-800">R$ {totais.dinheiro.toFixed(2)}</span></div>
-                      <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 flex flex-col"><span className="text-xs text-slate-500 flex items-center gap-1"><QrCode size={12}/> Pix</span><span className="font-bold text-slate-800">R$ {totais.pix.toFixed(2)}</span></div>
-                      <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 flex flex-col"><span className="text-xs text-slate-500 flex items-center gap-1"><CreditCard size={12}/> Crédito</span><span className="font-bold text-slate-800">R$ {totais.credito.toFixed(2)}</span></div>
-                      <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 flex flex-col"><span className="text-xs text-slate-500 flex items-center gap-1"><CreditCard size={12}/> Débito</span><span className="font-bold text-slate-800">R$ {totais.debito.toFixed(2)}</span></div>
+                  <h3 className="font-bold text-slate-800 mb-3 text-sm uppercase border-b border-slate-100 pb-2">Detalhamento de Entradas</h3>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 flex flex-col"><span className="text-xs text-slate-500 font-bold flex items-center gap-1"><Banknote size={14}/> Dinheiro</span><span className="font-black text-slate-800 text-lg">R$ {totais.dinheiro.toFixed(2)}</span></div>
+                      <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 flex flex-col"><span className="text-xs text-slate-500 font-bold flex items-center gap-1"><QrCode size={14}/> Pix</span><span className="font-black text-slate-800 text-lg">R$ {totais.pix.toFixed(2)}</span></div>
+                      <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 flex flex-col"><span className="text-xs text-slate-500 font-bold flex items-center gap-1"><CreditCard size={14}/> Crédito</span><span className="font-black text-slate-800 text-lg">R$ {totais.credito.toFixed(2)}</span></div>
+                      <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 flex flex-col"><span className="text-xs text-slate-500 font-bold flex items-center gap-1"><CreditCard size={14}/> Débito</span><span className="font-black text-slate-800 text-lg">R$ {totais.debito.toFixed(2)}</span></div>
                   </div>
               </div>
 
               <table className="w-full text-left text-sm">
-                  <thead className="bg-slate-100 text-slate-600 border-b"><tr><th className="py-2 px-2">Data</th><th className="py-2 px-2">Descrição</th><th className="py-2 px-2">Categoria</th><th className="py-2 px-2">Pagamento (Detalhes)</th><th className="py-2 px-2 text-right">Valor Total</th></tr></thead>
-                  <tbody className="divide-y">
+                  <thead className="bg-slate-50 text-slate-500 border-y uppercase text-[10px] tracking-wider font-bold"><tr><th className="py-3 px-2">Data Real</th><th className="py-3 px-2">Descrição</th><th className="py-3 px-2">Categoria</th><th className="py-3 px-2">Pagamento (Detalhes)</th><th className="py-3 px-2 text-right">Valor Total</th></tr></thead>
+                  <tbody className="divide-y divide-slate-50">
                       {resultado.map(t => (
                           <tr key={t.id} className="hover:bg-slate-50">
-                              <td className="py-2 px-2 whitespace-nowrap">{format(new Date(t.data), 'dd/MM/yy')}</td>
-                              <td className="py-2 px-2">{t.descricao} {t.alunos && <span className="text-xs text-slate-400 block">{t.alunos.nome}</span>}</td>
-                              <td className="py-2 px-2 text-xs">{t.categoria}</td>
-                              <td className="py-2 px-2 text-slate-600">{renderFormaPagamento(t)}</td>
-                              <td className={`py-2 px-2 text-right font-bold ${t.tipo === 'Receita' ? 'text-green-600' : 'text-red-600'}`}>{t.tipo === 'Receita' ? '+' : '-'} {Number(t.valor).toFixed(2)}</td>
+                              <td className="py-3 px-2 whitespace-nowrap font-mono">{format(parseISO(t.data), 'dd/MM/yy')}</td>
+                              <td className="py-3 px-2 font-medium">{t.descricao} {t.alunos && <span className="text-xs text-slate-400 block font-normal">{t.alunos.nome}</span>}</td>
+                              <td className="py-3 px-2 text-xs"><span className="bg-slate-100 text-slate-600 px-2 py-1 rounded font-bold">{t.categoria}</span></td>
+                              <td className="py-3 px-2 text-slate-600">{renderFormaPagamento(t)}</td>
+                              <td className={`py-3 px-2 text-right font-black ${t.tipo === 'Receita' ? 'text-green-600' : 'text-red-600'}`}>{t.tipo === 'Receita' ? '+' : '-'} R$ {Number(t.valor).toFixed(2)}</td>
                           </tr>
                       ))}
                   </tbody>
@@ -220,22 +248,22 @@ export default function Relatorios() {
       {/* MODAL DE TEXTO / WHATSAPP */}
       {showModalTexto && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[999]">
-            <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl flex flex-col animate-slideUp">
-                <div className="p-4 border-b flex justify-between items-center">
-                    <h3 className="font-bold text-slate-800 flex items-center gap-2"><MessageCircle className="text-green-500"/> Relatório Escrito</h3>
-                    <button onClick={() => setShowModalTexto(false)} className="text-slate-400 hover:text-slate-600"><X/></button>
+            <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl flex flex-col animate-slideUp">
+                <div className="p-5 border-b border-slate-100 flex justify-between items-center">
+                    <h3 className="font-black text-slate-800 flex items-center gap-2 uppercase tracking-tighter"><MessageCircle className="text-green-500"/> Copiar Relatório</h3>
+                    <button onClick={() => setShowModalTexto(false)} className="text-slate-400 hover:text-slate-600 bg-slate-100 p-2 rounded-full"><X size={18}/></button>
                 </div>
-                <div className="p-4 bg-slate-50">
-                    <p className="text-xs text-slate-500 mb-2">Edite abaixo se necessário, depois copie ou envie.</p>
+                <div className="p-6 bg-slate-50">
+                    <p className="text-xs text-slate-500 mb-3 font-bold">Edite o texto abaixo se necessário, depois clique em copiar ou enviar.</p>
                     <textarea 
                         value={textoRelatorio} 
                         onChange={(e) => setTextoRelatorio(e.target.value)}
-                        className="w-full h-64 p-3 border rounded-xl text-sm font-mono text-slate-700 focus:ring-2 focus:ring-green-500 focus:outline-none"
+                        className="w-full h-64 p-4 border border-slate-200 rounded-2xl text-sm font-mono text-slate-700 focus:ring-2 focus:ring-green-500 focus:outline-none custom-scrollbar"
                     />
                 </div>
-                <div className="p-4 flex gap-3">
-                    <button onClick={copiarTexto} className="flex-1 py-3 bg-slate-200 text-slate-700 font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-slate-300"><Copy size={18}/> Copiar</button>
-                    <button onClick={enviarWhatsApp} className="flex-1 py-3 bg-green-600 text-white font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-green-700 shadow-lg shadow-green-200"><Share2 size={18}/> Enviar Zap</button>
+                <div className="p-6 flex gap-3 bg-white rounded-b-3xl">
+                    <button onClick={copiarTexto} className="flex-1 py-4 bg-slate-100 text-slate-700 font-bold rounded-2xl flex items-center justify-center gap-2 hover:bg-slate-200 transition-all"><Copy size={18}/> Copiar Texto</button>
+                    <button onClick={enviarWhatsApp} className="flex-1 py-4 bg-green-600 text-white font-black uppercase tracking-wider rounded-2xl flex items-center justify-center gap-2 hover:bg-green-700 shadow-xl shadow-green-200 transition-all"><Share2 size={18}/> Abrir Zap</button>
                 </div>
             </div>
         </div>
