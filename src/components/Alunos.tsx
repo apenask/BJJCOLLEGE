@@ -635,7 +635,7 @@ export default function Alunos() {
                                         <span className="font-black text-blue-600 text-xs uppercase">{a.plano_dias?.join(' • ') || 'A Definir'}</span>
                                     </div>
                                     <div className="flex justify-between border-b border-slate-50 pb-2 mt-4">
-                                        <span className="text-slate-400 font-bold uppercase text-xs">Matrícula</span>
+                                        <span className="text-slate-400 font-bold uppercase text-xs">Tempo de Treino</span>
                                         <span className="font-black text-slate-800 text-xs text-right">
                                             {a.data_matricula ? format(new Date(a.data_matricula), 'dd/MM/yyyy') : 'N/A'}<br/>
                                             <span className="text-[10px] text-blue-600 italic uppercase">{calcularTempoTreino(a.data_matricula)}</span>
@@ -773,15 +773,39 @@ export default function Alunos() {
                                 </select>
                             </div>
 
+                            {/* SELECT DE GRADUAÇÃO CONDICIONAL */}
                             <div>
                               <label className="text-xs font-bold text-slate-400 uppercase ml-1">Graduação <span className="text-red-500">*</span></label>
                               <select className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-medium focus:ring-2 focus:ring-blue-500" value={formData.graduacao || ''} onChange={e=>setFormData({...formData, graduacao: e.target.value})}>
                                   <option value="">Selecione...</option>
-                                  <option>Branca</option><option>Cinza</option><option>Amarela</option><option>Laranja</option><option>Verde</option><option>Azul</option><option>Roxa</option><option>Marrom</option><option>Preta</option>
+                                  {formData.categoria === 'Adulto' ? (
+                                      <>
+                                          <option>Branca</option>
+                                          <option>Azul</option>
+                                          <option>Roxa</option>
+                                          <option>Marrom</option>
+                                          <option>Preta</option>
+                                      </>
+                                  ) : (
+                                      <>
+                                          <option>Branca</option>
+                                          <option>Cinza</option>
+                                          <option>Cinza e Branco</option>
+                                          <option>Cinza e Preto</option>
+                                          <option>Amarela</option>
+                                          <option>Amarela e Branco</option>
+                                          <option>Amarela e Preto</option>
+                                          <option>Laranja</option>
+                                          <option>Laranja e Branco</option>
+                                          <option>Laranja e Preto</option>
+                                          <option>Verde</option>
+                                          <option>Verde e Branco</option>
+                                          <option>Verde e Preto</option>
+                                      </>
+                                  )}
                               </select>
                             </div>
 
-                            {/* INPUT COM A MÁSCARA AUTOMÁTICA DE WHATSAPP */}
                             <div>
                                 <label className="text-xs font-bold text-slate-400 uppercase ml-1 flex items-center gap-1">
                                     {formData.categoria === 'Kids' || formData.categoria === 'Infantil' ? 'WhatsApp (Resp. Financeiro)' : 'WhatsApp'}
@@ -1100,7 +1124,7 @@ export default function Alunos() {
 
       {/* ALERT DE EXCLUSÃO */}
       {customAlert.show && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[999] animate-fadeIn">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[9999] animate-fadeIn">
           <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-sm shadow-2xl text-center">
             <div className="w-20 h-20 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-6"><Trash2 size={40} /></div>
             <h3 className="text-2xl font-black text-slate-800 uppercase italic mb-2">Excluir?</h3>
@@ -1115,7 +1139,7 @@ export default function Alunos() {
 
       {/* ALERT DE EXCLUSÃO FORÇADA */}
       {forceDeleteAlert.show && (
-        <div className="fixed inset-0 bg-red-900/80 backdrop-blur-md flex items-center justify-center p-4 z-[1000] animate-fadeIn">
+        <div className="fixed inset-0 bg-red-900/80 backdrop-blur-md flex items-center justify-center p-4 z-[10000] animate-fadeIn">
           <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-md shadow-2xl text-center border-4 border-red-500">
             <div className="w-24 h-24 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-6 animate-pulse"><AlertTriangle size={50} /></div>
             <h3 className="text-2xl font-black text-red-600 uppercase italic mb-2">REGISTROS PRESOS!</h3>
