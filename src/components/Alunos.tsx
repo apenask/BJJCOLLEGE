@@ -138,6 +138,21 @@ export default function Alunos() {
      setPagamentosParciais(novos);
   }
 
+  // --- NOVA FUNÇÃO: MÁSCARA DE WHATSAPP ---
+  function handleWhatsAppChange(e: React.ChangeEvent<HTMLInputElement>) {
+      let value = e.target.value.replace(/\D/g, ''); // Remove tudo o que não é número
+      if (value.length > 11) value = value.slice(0, 11); // Limite de 11 dígitos no Brasil
+      
+      let formatted = value;
+      if (value.length > 2) {
+          formatted = `(${value.slice(0, 2)}) ${value.slice(2)}`;
+      }
+      if (value.length > 7) {
+          formatted = `(${value.slice(0, 2)}) ${value.slice(2, 7)}-${value.slice(7)}`;
+      }
+      setFormData({ ...formData, whatsapp: formatted });
+  }
+
   async function handleFotoUpload(e: React.ChangeEvent<HTMLInputElement>) {
     if (!e.target.files || e.target.files.length === 0) return;
     try {
@@ -395,441 +410,461 @@ export default function Alunos() {
     setViewState('form');
   }
 
-  // FUNÇÃO DE LIMPEZA: Garante que ao voltar, nenhum modal fique "fantasma"
+  // --- Função de Segurança para Voltar limpando rastros ---
   function handleVoltarLista() {
       setPagamentoModal({ show: false, aluno: null, valorBase: 0, desconto: 0, mesReferencia: '' });
       setReciboModal(null);
       setViewState('list');
   }
 
-  if (viewState === 'details' && selectedAluno) {
-    const a = selectedAluno;
-    return (
-        <div className="animate-fadeIn pb-10">
-            <div className="flex items-center justify-between mb-6">
-                <button onClick={handleVoltarLista} className="flex items-center gap-2 text-slate-500 hover:text-slate-800 font-bold transition-all">
-                    <ChevronLeft size={24}/> Voltar para Lista
-                </button>
-                <div className="flex gap-2">
-                    <button onClick={() => { setFormData(a); setEditMode(true); setViewState('form'); }} className="p-3 bg-white border border-slate-200 rounded-2xl text-slate-600 hover:bg-slate-50 shadow-sm transition-all"><Edit size={20}/></button>
-                    <button onClick={() => setCustomAlert({ show: true, id: a.id, nome: a.nome })} className="p-3 bg-white border border-red-100 rounded-2xl text-red-500 hover:bg-red-50 shadow-sm transition-all"><Trash2 size={20}/></button>
+  // ESTRUTURA GERAL (Garante que os Modais flutuem em qualquer tela)
+  return (
+    <div className="pb-20">
+      
+      {/* ==================================================== */}
+      {/* TELA 1: LISTAGEM DE ALUNOS                           */}
+      {/* ==================================================== */}
+      {viewState === 'list' && (
+        <div className="space-y-6 animate-fadeIn">
+          <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
+              <h2 className="text-2xl font-bold text-slate-800 italic uppercase tracking-tighter">Gerenciar Alunos</h2>
+              <button onClick={handleNovoAluno} className="bg-slate-900 text-white px-6 py-3 rounded-2xl flex items-center gap-2 hover:bg-black shadow-lg transition-all font-bold text-sm w-full sm:w-auto justify-center"><Plus size={20}/> NOVO ALUNO</button>
+          </div>
+          
+          <div className="flex gap-2 flex-wrap">
+              <div className="flex bg-slate-200 p-1 rounded-2xl gap-1 overflow-x-auto flex-1">
+                  {['Adulto', 'Infantil', 'Kids'].map(c => (<button key={c} onClick={()=>{setTabAtual(c as any); setFiltroDevedores(false);}} className={`flex-1 px-6 py-3 rounded-xl font-bold text-sm transition-all ${tabAtual===c && !filtroDevedores ? 'bg-white text-blue-600 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>{c}</button>))}
+              </div>
+              <button 
+                onClick={() => setFiltroDevedores(!filtroDevedores)} 
+                className={`px-6 py-3 rounded-2xl font-bold text-sm flex items-center gap-2 transition-all ${filtroDevedores ? 'bg-red-600 text-white shadow-lg' : 'bg-red-50 text-red-600 border border-red-100'}`}
+              >
+                <AlertTriangle size={18} /> Inadimplentes
+              </button>
+          </div>
+
+          <div className="bg-white rounded-[2rem] shadow-sm overflow-hidden border border-slate-100">
+              <table className="w-full text-left">
+                <thead className="bg-slate-50 text-slate-400 text-[10px] uppercase font-black tracking-widest"><tr><th className="p-5">Informação</th><th className="p-5 text-center">Status Pagto</th><th className="p-5 text-right">Ações</th></tr></thead>
+                <tbody className="divide-y divide-slate-50">
+                    {filteredAlunos.map(aluno => (
+                      <tr key={aluno.id} className="hover:bg-slate-50/50 transition-colors">
+                          <td className="p-4 cursor-pointer group" onClick={() => { setSelectedAluno(aluno); setViewState('details'); }}>
+                              <div className="flex items-center gap-4">
+                                  <div className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center relative border border-slate-200 overflow-hidden shadow-inner">
+                                      {aluno.foto_url ? <img src={aluno.foto_url} className="w-full h-full object-cover" /> : <User className="text-slate-300" size={24}/>}
+                                      {aluno.neurodivergente && <div className="absolute top-1 right-1 bg-purple-600 text-white p-1 rounded-full border border-white shadow-sm"><Brain size={10}/></div>}
+                                  </div>
+                                  <div>
+                                      <div className="font-bold text-slate-800 flex items-center gap-2 group-hover:text-blue-600">
+                                          {aluno.nome}
+                                          {aluno.status === 'Inativo' && <span className="bg-red-100 text-red-600 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">Inativo</span>}
+                                          {isAniversariante(aluno.data_nascimento) && (
+                                            <span className="bg-pink-100 text-pink-700 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 uppercase italic">
+                                              Aniv. <Cake size={14} className="animate-bounce" />
+                                            </span>
+                                          )}
+                                          {aluno.atleta && <span className="w-2 h-2 rounded-full bg-blue-500" title="Atleta"></span>}
+                                      </div>
+                                      <div className="flex gap-2 mt-1">
+                                          <span className="text-[10px] font-black uppercase text-slate-400 bg-slate-100 px-2 py-0.5 rounded">{aluno.graduacao}</span>
+                                          {aluno.bolsista_jiujitsu && <span className="text-[10px] font-black uppercase bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded">Bols. Isento</span>}
+                                          {(aluno.divida_loja || 0) > 0 && <span className="text-[10px] font-black uppercase bg-red-100 text-red-600 px-2 py-0.5 rounded">Deve Loja</span>}
+                                      </div>
+                                  </div>
+                              </div>
+                          </td>
+                          <td className="p-4 text-center">
+                              {aluno.status === 'Inativo' ? (
+                                  <div className="text-xs font-bold text-slate-400 border border-slate-200 px-4 py-2 rounded-xl inline-flex">-</div>
+                              ) : aluno.pago_mes_atual ? (
+                                  <div className="bg-green-50 text-green-600 px-4 py-2 rounded-xl text-xs font-bold inline-flex items-center gap-2 border border-green-100"><CheckCircle size={14}/> {aluno.bolsista_jiujitsu ? 'ISENTO' : 'PAGO'}</div>
+                              ) : (
+                                  <div className="flex items-center justify-center gap-3">
+                                      <span className="text-[10px] font-black text-red-400 uppercase tracking-tighter">Pendente</span>
+                                      <button onClick={(e) => { e.stopPropagation(); abrirModalPagamento(aluno, mesAtualRef); }} className="w-10 h-10 bg-green-500 text-white rounded-xl hover:bg-green-600 shadow-md flex items-center justify-center transition-all hover:scale-110"><DollarSign size={20} /></button>
+                                  </div>
+                              )}
+                          </td>
+                          <td className="p-4 text-right">
+                              <div className="flex justify-end gap-1">
+                                <button onClick={(e)=>{ e.stopPropagation(); setFormData(aluno); setEditMode(true); setViewState('form')}} className="p-3 text-slate-400 hover:text-blue-600 rounded-xl transition-all"><Edit size={20}/></button>
+                                <button onClick={(e)=>{ e.stopPropagation(); setCustomAlert({ show: true, id: aluno.id, nome: aluno.nome }); }} className="p-3 text-slate-400 hover:text-red-500 rounded-xl transition-all"><Trash2 size={20}/></button>
+                              </div>
+                          </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================== */}
+      {/* TELA 2: DETALHES DO ALUNO                            */}
+      {/* ==================================================== */}
+      {viewState === 'details' && selectedAluno && (() => {
+        const a = selectedAluno;
+        return (
+            <div className="animate-fadeIn">
+                <div className="flex items-center justify-between mb-6">
+                    <button onClick={handleVoltarLista} className="flex items-center gap-2 text-slate-500 hover:text-slate-800 font-bold transition-all">
+                        <ChevronLeft size={24}/> Voltar para Lista
+                    </button>
+                    <div className="flex gap-2">
+                        <button onClick={() => { setFormData(a); setEditMode(true); setViewState('form'); }} className="p-3 bg-white border border-slate-200 rounded-2xl text-slate-600 hover:bg-slate-50 shadow-sm transition-all"><Edit size={20}/></button>
+                        <button onClick={() => setCustomAlert({ show: true, id: a.id, nome: a.nome })} className="p-3 bg-white border border-red-100 rounded-2xl text-red-500 hover:bg-red-50 shadow-sm transition-all"><Trash2 size={20}/></button>
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                    <div className="lg:col-span-4 space-y-6">
+                        <div className="bg-white rounded-[2.5rem] p-8 shadow-xl shadow-slate-200/50 border border-white flex flex-col items-center text-center relative overflow-hidden">
+                            <div className={`absolute top-0 inset-x-0 h-3 ${a.status === 'Ativo' ? 'bg-green-500' : 'bg-slate-300'}`}></div>
+                            
+                            <div className="w-40 h-40 rounded-[3rem] bg-slate-100 flex items-center justify-center mb-6 border-4 border-white shadow-2xl overflow-hidden relative">
+                                {a.foto_url ? <img src={a.foto_url} className="w-full h-full object-cover" /> : <User size={80} className="text-slate-300"/>}
+                                {a.neurodivergente && (
+                                    <div className="absolute bottom-2 right-2 bg-purple-600 text-white p-2 rounded-2xl border-2 border-white shadow-lg">
+                                        <Brain size={20}/>
+                                    </div>
+                                )}
+                            </div>
+
+                            <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tighter leading-tight mb-1">{a.nome}</h2>
+                            <div className="flex items-center gap-2 mb-6">
+                                <span className="bg-slate-900 text-white text-[10px] font-black px-3 py-1 rounded-full uppercase">{a.graduacao}</span>
+                                <span className="bg-blue-100 text-blue-700 text-[10px] font-black px-3 py-1 rounded-full uppercase">{a.categoria}</span>
+                                {a.status === 'Inativo' && <span className="bg-red-100 text-red-600 text-[10px] font-black px-3 py-1 rounded-full uppercase">INATIVO</span>}
+                            </div>
+
+                            <div className="w-full p-6 rounded-3xl border border-slate-100 bg-slate-50 mb-6 shadow-sm">
+                                <p className="text-[10px] font-black text-slate-400 uppercase mb-4 tracking-widest border-b border-slate-200 pb-2">Controle de Mensalidades</p>
+                                
+                                <div className="space-y-4">
+                                    {a.status === 'Inativo' ? (
+                                        <div className="flex items-center justify-center gap-2 text-slate-400 font-black uppercase text-sm py-4">
+                                            <X size={20}/> Mensalidade Suspensa
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex flex-col gap-3">
+                                                <div className="flex justify-between items-center">
+                                                    <p className="font-bold text-slate-800 uppercase text-sm">Mês Atual: {mesAtualNome} <span className="text-[10px] text-slate-400">({mesAtualRef.split('/')[1]})</span></p>
+                                                </div>
+                                                {a.pago_mes_atual ? (
+                                                    <div className="w-full bg-green-50 text-green-700 py-3 rounded-xl font-black uppercase text-xs flex justify-center items-center gap-2 border border-green-100">
+                                                        <CheckCircle size={16}/> Pago
+                                                    </div>
+                                                ) : (
+                                                    <button 
+                                                        onClick={(e) => { e.preventDefault(); abrirModalPagamento(a, mesAtualRef); }}
+                                                        className="w-full bg-green-500 text-white py-3 rounded-xl font-black uppercase text-xs flex justify-center items-center gap-2 hover:bg-green-600 shadow-md transition-all active:scale-95"
+                                                    >
+                                                        <DollarSign size={18}/> Receber Mensalidade
+                                                    </button>
+                                                )}
+                                            </div>
+
+                                            <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex flex-col gap-3">
+                                                <div className="flex justify-between items-center">
+                                                    <p className="font-bold text-slate-800 uppercase text-sm">Próximo Mês: {proximoMesNome} <span className="text-[10px] text-slate-400">({proximoMesRef.split('/')[1]})</span></p>
+                                                </div>
+                                                {a.pago_proximo_mes ? (
+                                                    <div className="w-full bg-green-50 text-green-700 py-3 rounded-xl font-black uppercase text-xs flex justify-center items-center gap-2 border border-green-100">
+                                                        <CheckCircle size={16}/> Pago Antecipado
+                                                    </div>
+                                                ) : (
+                                                    <button 
+                                                        onClick={(e) => { e.preventDefault(); abrirModalPagamento(a, proximoMesRef); }}
+                                                        className="w-full bg-slate-900 text-white py-3 rounded-xl font-black uppercase text-xs flex justify-center items-center gap-2 hover:bg-black shadow-md transition-all active:scale-95"
+                                                    >
+                                                        <DollarSign size={18} className="text-green-400"/> Adiantar Pagamento
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </>
+                                    )}
+
+                                    {(a.divida_loja || 0) > 0 && (
+                                        <div className="bg-red-50 border border-red-100 p-4 rounded-2xl flex items-center justify-between animate-pulse mt-2">
+                                            <div className="flex items-center gap-3 text-red-600">
+                                                <div className="p-2 bg-white rounded-lg shadow-sm"><ShoppingBag size={18}/></div>
+                                                <div>
+                                                    <p className="text-[10px] font-bold uppercase tracking-wider">Deve na Loja</p>
+                                                    <p className="text-lg font-black leading-none">R$ {a.divida_loja?.toFixed(2)}</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="w-full grid grid-cols-2 gap-2">
+                                 {a.atleta && <div className="bg-blue-50 text-blue-600 p-3 rounded-2xl text-[10px] font-black uppercase flex items-center justify-center gap-2 border border-blue-100"><Trophy size={14}/> Competidor</div>}
+                                 {(a.bolsista_jiujitsu || a.bolsista_musculacao) && <div className="bg-yellow-50 text-yellow-700 p-3 rounded-2xl text-[10px] font-black uppercase flex items-center justify-center gap-2 border border-yellow-100"><Medal size={14}/> Bolsista</div>}
+                            </div>
+                        </div>
+
+                        <div className="bg-white rounded-[2.5rem] p-6 shadow-lg border border-white flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                                <div className="p-3 bg-blue-50 text-blue-600 rounded-2xl"><Phone size={20}/></div>
+                                <div>
+                                    <p className="text-[10px] font-black text-slate-400 uppercase">
+                                        {(a.categoria === 'Kids' || a.categoria === 'Infantil') ? 'WhatsApp do Responsável' : 'WhatsApp'}
+                                    </p>
+                                    <p className="font-bold text-slate-800">{a.whatsapp || 'Não cadastrado'}</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="lg:col-span-8 space-y-6">
+                        <div className="bg-white rounded-[2.5rem] p-8 shadow-xl border border-white">
+                            <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight mb-6 flex items-center gap-2">
+                                <Zap size={22} className="text-yellow-500"/> Detalhes do Plano
+                            </h3>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                <div className="space-y-4">
+                                    <div className="flex justify-between border-b border-slate-50 pb-2">
+                                        <span className="text-slate-400 font-bold uppercase text-xs">Tipo de Plano</span>
+                                        <span className="font-black text-slate-800 italic">{a.plano_tipo}</span>
+                                    </div>
+                                    <div className="flex justify-between border-b border-slate-50 pb-2">
+                                        <span className="text-slate-400 font-bold uppercase text-xs">Dias de Treino</span>
+                                        <span className="font-black text-blue-600 text-xs uppercase">{a.plano_dias?.join(' • ') || 'A Definir'}</span>
+                                    </div>
+                                    <div className="flex justify-between border-b border-slate-50 pb-2 mt-4">
+                                        <span className="text-slate-400 font-bold uppercase text-xs">Tempo de Treino</span>
+                                        <span className="font-black text-slate-800 text-xs text-right">
+                                            {a.data_matricula ? format(new Date(a.data_matricula), 'dd/MM/yyyy') : 'N/A'}<br/>
+                                            <span className="text-[10px] text-blue-600 italic uppercase">{calcularTempoTreino(a.data_matricula)}</span>
+                                        </span>
+                                    </div>
+                                </div>
+                                <div className="space-y-4">
+                                    <div className="flex justify-between border-b border-slate-50 pb-2">
+                                        <span className="text-slate-400 font-bold uppercase text-xs">Jiu-Jitsu Bolsista</span>
+                                        <span className={`font-black uppercase text-xs ${a.bolsista_jiujitsu ? 'text-green-600' : 'text-slate-300'}`}>{a.bolsista_jiujitsu ? 'Ativo (Isento)' : 'Não'}</span>
+                                    </div>
+                                    <div className="flex justify-between border-b border-slate-50 pb-2">
+                                        <span className="text-slate-400 font-bold uppercase text-xs">Musculação Bolsista</span>
+                                        <span className={`font-black uppercase text-xs ${a.bolsista_musculacao ? 'text-green-600' : 'text-slate-300'}`}>{a.bolsista_musculacao ? 'Ativo (Paga Normal)' : 'Não'}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="bg-white rounded-[2.5rem] p-8 shadow-xl border border-white bg-gradient-to-br from-white to-red-50/20">
+                            <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight mb-6 flex items-center gap-2">
+                                <HeartPulse size={22} className="text-red-500"/> Saúde e Condições
+                            </h3>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+                                <div className="space-y-6">
+                                    <div className="flex items-center gap-4">
+                                        <div className="p-4 bg-red-100 text-red-600 rounded-3xl"><Droplet size={24}/></div>
+                                        <div>
+                                            <p className="text-[10px] font-black text-slate-400 uppercase">Tipo Sanguíneo</p>
+                                            <p className="text-2xl font-black text-red-600 italic">{a.tipo_sanguineo || 'N/A'}</p>
+                                        </div>
+                                    </div>
+                                    {a.neurodivergente && (
+                                        <div className="p-5 bg-purple-50 border border-purple-100 rounded-[2rem]">
+                                            <div className="flex items-center gap-2 text-purple-700 font-black uppercase text-[10px] mb-1"><Brain size={16}/> Neurodivergência</div>
+                                            <p className="font-bold text-purple-900">{a.neurodivergencia_tipo || 'Especificado'}</p>
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="space-y-6">
+                                    <div>
+                                        <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Alergias e Remédios</p>
+                                        <div className="bg-white p-4 rounded-3xl border border-red-100 text-sm text-slate-600 italic shadow-inner">
+                                            {a.alergias || 'Nenhuma alergia ou remédio registrado.'}
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Observações Especiais / Responsáveis</p>
+                                        <div className="bg-white p-4 rounded-3xl border border-slate-100 text-sm text-slate-600 shadow-inner">
+                                            {a.detalhes_condicao || 'Sem observações adicionais.'}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
+        );
+      })()}
 
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                <div className="lg:col-span-4 space-y-6">
-                    <div className="bg-white rounded-[2.5rem] p-8 shadow-xl shadow-slate-200/50 border border-white flex flex-col items-center text-center relative overflow-hidden">
-                        <div className={`absolute top-0 inset-x-0 h-3 ${a.status === 'Ativo' ? 'bg-green-500' : 'bg-slate-300'}`}></div>
-                        
-                        <div className="w-40 h-40 rounded-[3rem] bg-slate-100 flex items-center justify-center mb-6 border-4 border-white shadow-2xl overflow-hidden relative">
-                            {a.foto_url ? <img src={a.foto_url} className="w-full h-full object-cover" /> : <User size={80} className="text-slate-300"/>}
-                            {a.neurodivergente && (
-                                <div className="absolute bottom-2 right-2 bg-purple-600 text-white p-2 rounded-2xl border-2 border-white shadow-lg">
-                                    <Brain size={20}/>
-                                </div>
-                            )}
-                        </div>
-
-                        <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tighter leading-tight mb-1">{a.nome}</h2>
-                        <div className="flex items-center gap-2 mb-6">
-                            <span className="bg-slate-900 text-white text-[10px] font-black px-3 py-1 rounded-full uppercase">{a.graduacao}</span>
-                            <span className="bg-blue-100 text-blue-700 text-[10px] font-black px-3 py-1 rounded-full uppercase">{a.categoria}</span>
-                            {a.status === 'Inativo' && <span className="bg-red-100 text-red-600 text-[10px] font-black px-3 py-1 rounded-full uppercase">INATIVO</span>}
-                        </div>
-
-                        {/* NOVO PAINEL DE MENSALIDADES - BOTÕES GRANDES E CLAROS */}
-                        <div className="w-full p-6 rounded-3xl border border-slate-100 bg-slate-50 mb-6 shadow-sm">
-                            <p className="text-[10px] font-black text-slate-400 uppercase mb-4 tracking-widest border-b border-slate-200 pb-2">Controle de Mensalidades</p>
-                            
-                            <div className="space-y-4">
-                                {a.status === 'Inativo' ? (
-                                    <div className="flex items-center justify-center gap-2 text-slate-400 font-black uppercase text-sm py-4">
-                                        <X size={20}/> Mensalidade Suspensa
-                                    </div>
-                                ) : (
-                                    <>
-                                        {/* PAINEL MÊS ATUAL */}
-                                        <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex flex-col gap-3">
-                                            <div className="flex justify-between items-center">
-                                                <p className="font-bold text-slate-800 uppercase text-sm">Mês Atual: {mesAtualNome} <span className="text-[10px] text-slate-400">({mesAtualRef.split('/')[1]})</span></p>
-                                            </div>
-                                            {a.pago_mes_atual ? (
-                                                <div className="w-full bg-green-50 text-green-700 py-3 rounded-xl font-black uppercase text-xs flex justify-center items-center gap-2 border border-green-100">
-                                                    <CheckCircle size={16}/> Pago
-                                                </div>
-                                            ) : (
-                                                <button 
-                                                    onClick={(e) => { e.preventDefault(); abrirModalPagamento(a, mesAtualRef); }}
-                                                    className="w-full bg-green-500 text-white py-3 rounded-xl font-black uppercase text-xs flex justify-center items-center gap-2 hover:bg-green-600 shadow-md transition-all active:scale-95"
-                                                >
-                                                    <DollarSign size={18}/> Receber Mensalidade
-                                                </button>
-                                            )}
-                                        </div>
-
-                                        {/* PAINEL PRÓXIMO MÊS */}
-                                        <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex flex-col gap-3">
-                                            <div className="flex justify-between items-center">
-                                                <p className="font-bold text-slate-800 uppercase text-sm">Próximo Mês: {proximoMesNome} <span className="text-[10px] text-slate-400">({proximoMesRef.split('/')[1]})</span></p>
-                                            </div>
-                                            {a.pago_proximo_mes ? (
-                                                <div className="w-full bg-green-50 text-green-700 py-3 rounded-xl font-black uppercase text-xs flex justify-center items-center gap-2 border border-green-100">
-                                                    <CheckCircle size={16}/> Pago Antecipado
-                                                </div>
-                                            ) : (
-                                                <button 
-                                                    onClick={(e) => { e.preventDefault(); abrirModalPagamento(a, proximoMesRef); }}
-                                                    className="w-full bg-slate-900 text-white py-3 rounded-xl font-black uppercase text-xs flex justify-center items-center gap-2 hover:bg-black shadow-md transition-all active:scale-95"
-                                                >
-                                                    <DollarSign size={18} className="text-green-400"/> Adiantar Pagamento
-                                                </button>
-                                            )}
-                                        </div>
-                                    </>
-                                )}
-
-                                {/* DÍVIDA NA LOJA */}
-                                {(a.divida_loja || 0) > 0 && (
-                                    <div className="bg-red-50 border border-red-100 p-4 rounded-2xl flex items-center justify-between animate-pulse mt-2">
-                                        <div className="flex items-center gap-3 text-red-600">
-                                            <div className="p-2 bg-white rounded-lg shadow-sm"><ShoppingBag size={18}/></div>
-                                            <div>
-                                                <p className="text-[10px] font-bold uppercase tracking-wider">Deve na Loja</p>
-                                                <p className="text-lg font-black leading-none">R$ {a.divida_loja?.toFixed(2)}</p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-
-                        <div className="w-full grid grid-cols-2 gap-2">
-                             {a.atleta && <div className="bg-blue-50 text-blue-600 p-3 rounded-2xl text-[10px] font-black uppercase flex items-center justify-center gap-2 border border-blue-100"><Trophy size={14}/> Competidor</div>}
-                             {(a.bolsista_jiujitsu || a.bolsista_musculacao) && <div className="bg-yellow-50 text-yellow-700 p-3 rounded-2xl text-[10px] font-black uppercase flex items-center justify-center gap-2 border border-yellow-100"><Medal size={14}/> Bolsista</div>}
-                        </div>
-                    </div>
-
-                    <div className="bg-white rounded-[2.5rem] p-6 shadow-lg border border-white flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                            <div className="p-3 bg-blue-50 text-blue-600 rounded-2xl"><Phone size={20}/></div>
-                            <div>
-                                <p className="text-[10px] font-black text-slate-400 uppercase">
-                                    {(a.categoria === 'Kids' || a.categoria === 'Infantil') ? 'WhatsApp do Responsável' : 'WhatsApp'}
-                                </p>
-                                <p className="font-bold text-slate-800">{a.whatsapp || 'Não cadastrado'}</p>
-                            </div>
-                        </div>
-                    </div>
+      {/* ==================================================== */}
+      {/* TELA 3: FORMULÁRIO (NOVO/EDITAR)                     */}
+      {/* ==================================================== */}
+      {viewState === 'form' && (
+        <div className="bg-slate-50 min-h-screen p-2 md:p-6 animate-fadeIn">
+            <div className="max-w-4xl mx-auto">
+                <div className="flex items-center justify-between mb-8 italic uppercase font-black text-slate-800">
+                    <button onClick={handleVoltarLista} className="p-2 hover:bg-white rounded-full transition-colors"><ChevronLeft size={28}/></button>
+                    <h2 className="text-2xl">{editMode ? 'Editar Perfil' : 'Novo Aluno'}</h2>
+                    <div className="w-10"></div>
                 </div>
 
-                <div className="lg:col-span-8 space-y-6">
-                    <div className="bg-white rounded-[2.5rem] p-8 shadow-xl border border-white">
-                        <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight mb-6 flex items-center gap-2">
-                            <Zap size={22} className="text-yellow-500"/> Detalhes do Plano
-                        </h3>
+                <form onSubmit={handleSubmit} className="space-y-6">
+                    <div className="flex flex-col items-center gap-4 mb-8">
+                        <div className="relative">
+                            <div className="w-36 h-36 rounded-[2.5rem] bg-white border-4 border-white shadow-2xl overflow-hidden flex items-center justify-center">
+                                {formData.foto_url ? <img src={formData.foto_url} className="w-full h-full object-cover" /> : <User size={50} className="text-slate-200" />}
+                                {uploading && <div className="absolute inset-0 bg-black/40 flex items-center justify-center text-white text-[10px] font-black uppercase">Enviando...</div>}
+                            </div>
+                            <label className="absolute bottom-[-5px] right-[-5px] bg-blue-600 text-white p-3 rounded-2xl shadow-xl cursor-pointer hover:scale-110 transition-all">
+                                <Plus size={24} /><input type="file" className="hidden" accept="image/*" onChange={handleFotoUpload} disabled={uploading} />
+                            </label>
+                        </div>
+                    </div>
+
+                    <div className="bg-white rounded-[2.5rem] p-6 md:p-10 shadow-xl border border-white">
+                        <div className="flex items-center gap-3 mb-8 text-blue-600"><User size={24}/><h3 className="text-xl font-bold text-slate-800">Dados Pessoais</h3></div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="md:col-span-2">
+                                <label className="text-xs font-bold text-slate-400 uppercase ml-1">Nome Completo <span className="text-red-500">*</span></label>
+                                <input className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-medium focus:ring-2 focus:ring-blue-500" value={formData.nome || ''} onChange={e=>setFormData({...formData, nome: e.target.value})} placeholder="Ex: Jackson Lima" />
+                            </div>
+                            <div>
+                                <label className="text-xs font-bold text-slate-400 uppercase ml-1">Aniversário <span className="text-red-500">*</span></label>
+                                <input type="date" className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-medium text-slate-600 focus:ring-2 focus:ring-blue-500" value={formData.data_nascimento || ''} onChange={e=>setFormData({...formData, data_nascimento: e.target.value})} />
+                            </div>
+                            <div>
+                                <label className="text-xs font-bold text-slate-400 uppercase ml-1">Data de Matrícula</label>
+                                <input type="date" className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-medium text-slate-600 focus:ring-2 focus:ring-blue-500" value={formData.data_matricula || ''} onChange={e=>setFormData({...formData, data_matricula: e.target.value})} />
+                            </div>
+                            
+                            <div>
+                                <label className="text-xs font-bold text-slate-400 uppercase ml-1">Turma <span className="text-red-500">*</span></label>
+                                <select 
+                                    className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-bold text-blue-600" 
+                                    value={formData.categoria} 
+                                    onChange={e => {
+                                        const novaCategoria = e.target.value as any;
+                                        let novoPlano = formData.plano_tipo || 'Todos os dias';
+                                        let novosDias = formData.plano_dias || [];
+
+                                        if (novaCategoria === 'Kids') {
+                                            novoPlano = '2 Dias';
+                                            novosDias = ['Terça', 'Quinta'];
+                                        } else if (novaCategoria === 'Infantil') {
+                                            novoPlano = '3 Dias';
+                                            novosDias = ['Segunda', 'Quarta', 'Sexta'];
+                                        } else if (novaCategoria === 'Adulto') {
+                                            novoPlano = 'Todos os dias';
+                                            novosDias = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
+                                        }
+
+                                        setFormData({
+                                            ...formData, 
+                                            categoria: novaCategoria,
+                                            plano_tipo: novoPlano,
+                                            plano_dias: novosDias
+                                        });
+                                    }}
+                                >
+                                    <option value="Adulto">🥋 Adulto</option>
+                                    <option value="Infantil">👦 Infantil</option>
+                                    <option value="Kids">👶 Kids</option>
+                                </select>
+                            </div>
+
+                            <div>
+                              <label className="text-xs font-bold text-slate-400 uppercase ml-1">Graduação <span className="text-red-500">*</span></label>
+                              <select className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-medium focus:ring-2 focus:ring-blue-500" value={formData.graduacao || ''} onChange={e=>setFormData({...formData, graduacao: e.target.value})}>
+                                  <option value="">Selecione...</option>
+                                  <option>Branca</option><option>Cinza</option><option>Amarela</option><option>Laranja</option><option>Verde</option><option>Azul</option><option>Roxa</option><option>Marrom</option><option>Preta</option>
+                              </select>
+                            </div>
+
+                            {/* INPUT COM A MÁSCARA AUTOMÁTICA DE WHATSAPP */}
+                            <div>
+                                <label className="text-xs font-bold text-slate-400 uppercase ml-1 flex items-center gap-1">
+                                    {formData.categoria === 'Kids' || formData.categoria === 'Infantil' ? 'WhatsApp (Resp. Financeiro)' : 'WhatsApp'}
+                                </label>
+                                <input 
+                                  className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-medium focus:ring-2 focus:ring-blue-500" 
+                                  value={formData.whatsapp || ''} 
+                                  onChange={handleWhatsAppChange} 
+                                  placeholder="(87) 90000-0000" 
+                                  maxLength={15}
+                                />
+                                {(formData.categoria === 'Kids' || formData.categoria === 'Infantil') && (
+                                    <p className="text-[10px] text-slate-500 mt-1 ml-1 leading-tight">Para outros responsáveis, anote nas observações.</p>
+                                )}
+                            </div>
+
+                            <div>
+                                <label className="text-xs font-bold text-slate-400 uppercase ml-1">Status do Aluno</label>
+                                <select className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-bold text-slate-700" value={formData.status || 'Ativo'} onChange={e=>setFormData({...formData, status: e.target.value})}>
+                                    <option value="Ativo">🟢 Ativo (Treinando)</option>
+                                    <option value="Inativo">🔴 Inativo (Parou)</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="bg-white rounded-[2.5rem] p-6 md:p-10 shadow-xl border border-white">
+                        <div className="flex items-center gap-3 mb-8 text-red-600"><HeartPulse size={24}/><h3 className="text-xl font-bold text-slate-800">Saúde e Cuidados</h3></div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                            <div className="space-y-6">
+                                <div><label className="text-xs font-bold text-slate-400 uppercase ml-1">Tipo Sanguíneo</label><select className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2" value={formData.tipo_sanguineo || ''} onChange={e=>setFormData({...formData, tipo_sanguineo: e.target.value})}><option value="">Não informado</option><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option><option>O+</option><option>O-</option></select></div>
+                                <div className={`p-6 rounded-3xl border-2 transition-all ${formData.neurodivergente ? 'bg-purple-50 border-purple-200' : 'bg-slate-50 border-transparent'}`}>
+                                    <label className="flex items-center justify-between cursor-pointer"><div className="flex items-center gap-3"><Brain className={formData.neurodivergente ? 'text-purple-600' : 'text-slate-300'} size={24}/><span className={`font-bold ${formData.neurodivergente ? 'text-purple-700' : 'text-slate-400'}`}>Neurodivergente?</span></div><input type="checkbox" className="w-6 h-6 rounded-lg text-purple-600 border-none bg-white shadow-sm" checked={formData.neurodivergente || false} onChange={e => setFormData({...formData, neurodivergente: e.target.checked})} /></label>
+                                    {formData.neurodivergente && <input className="w-full bg-white border-none rounded-xl p-3 mt-4 text-sm font-bold text-purple-600" placeholder="Qual o tipo? (Ex: TDAH)" value={formData.neurodivergencia_tipo || ''} onChange={e => setFormData({...formData, neurodivergencia_tipo: e.target.value})} />}
+                                </div>
+                            </div>
+                            <div className="space-y-6">
+                                <div><label className="text-xs font-bold text-slate-400 uppercase">Alergias e Remédios</label><textarea className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 h-24 focus:ring-2 focus:ring-red-400" value={formData.alergias || ''} onChange={e=>setFormData({...formData, alergias: e.target.value})} /></div>
+                                <div><label className="text-xs font-bold text-slate-400 uppercase">Observações (Outros Responsáveis)</label><textarea className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 h-24" value={formData.detalhes_condicao || ''} onChange={e=>setFormData({...formData, detalhes_condicao: e.target.value})} /></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="bg-white rounded-[2.5rem] p-6 md:p-10 shadow-xl border border-white">
+                        <div className="flex items-center gap-3 mb-8 text-yellow-600"><Medal size={24}/><h3 className="text-xl font-bold text-slate-800">Planos & Atleta</h3></div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                             <div className="space-y-4">
-                                <div className="flex justify-between border-b border-slate-50 pb-2">
-                                    <span className="text-slate-400 font-bold uppercase text-xs">Tipo de Plano</span>
-                                    <span className="font-black text-slate-800 italic">{a.plano_tipo}</span>
-                                </div>
-                                <div className="flex justify-between border-b border-slate-50 pb-2">
-                                    <span className="text-slate-400 font-bold uppercase text-xs">Dias de Treino</span>
-                                    <span className="font-black text-blue-600 text-xs uppercase">{a.plano_dias?.join(' • ') || 'A Definir'}</span>
-                                </div>
-                                <div className="flex justify-between border-b border-slate-50 pb-2 mt-4">
-                                    <span className="text-slate-400 font-bold uppercase text-xs">Tempo de Treino</span>
-                                    <span className="font-black text-slate-800 text-xs text-right">
-                                        {a.data_matricula ? format(new Date(a.data_matricula), 'dd/MM/yyyy') : 'N/A'}<br/>
-                                        <span className="text-[10px] text-blue-600 italic uppercase">{calcularTempoTreino(a.data_matricula)}</span>
-                                    </span>
-                                </div>
-                            </div>
-                            <div className="space-y-4">
-                                <div className="flex justify-between border-b border-slate-50 pb-2">
-                                    <span className="text-slate-400 font-bold uppercase text-xs">Jiu-Jitsu Bolsista</span>
-                                    <span className={`font-black uppercase text-xs ${a.bolsista_jiujitsu ? 'text-green-600' : 'text-slate-300'}`}>{a.bolsista_jiujitsu ? 'Ativo (Isento)' : 'Não'}</span>
-                                </div>
-                                <div className="flex justify-between border-b border-slate-50 pb-2">
-                                    <span className="text-slate-400 font-bold uppercase text-xs">Musculação Bolsista</span>
-                                    <span className={`font-black uppercase text-xs ${a.bolsista_musculacao ? 'text-green-600' : 'text-slate-300'}`}>{a.bolsista_musculacao ? 'Ativo (Paga Normal)' : 'Não'}</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div className="bg-white rounded-[2.5rem] p-8 shadow-xl border border-white bg-gradient-to-br from-white to-red-50/20">
-                        <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight mb-6 flex items-center gap-2">
-                            <HeartPulse size={22} className="text-red-500"/> Saúde e Condições
-                        </h3>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
-                            <div className="space-y-6">
-                                <div className="flex items-center gap-4">
-                                    <div className="p-4 bg-red-100 text-red-600 rounded-3xl"><Droplet size={24}/></div>
-                                    <div>
-                                        <p className="text-[10px] font-black text-slate-400 uppercase">Tipo Sanguíneo</p>
-                                        <p className="text-2xl font-black text-red-600 italic">{a.tipo_sanguineo || 'N/A'}</p>
-                                    </div>
-                                </div>
-                                {a.neurodivergente && (
-                                    <div className="p-5 bg-purple-50 border border-purple-100 rounded-[2rem]">
-                                        <div className="flex items-center gap-2 text-purple-700 font-black uppercase text-[10px] mb-1"><Brain size={16}/> Neurodivergência</div>
-                                        <p className="font-bold text-purple-900">{a.neurodivergencia_tipo || 'Especificado'}</p>
+                                <label className="text-xs font-bold text-slate-400 uppercase">Plano Escolhido</label>
+                                <select className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-bold text-slate-700" value={formData.plano_tipo || 'Todos os dias'} onChange={e=>setFormData({...formData, plano_tipo: e.target.value})}>
+                                    <option value="Todos os dias">Todos os dias (R$ 80)</option>
+                                    <option value="3 Dias">3 Dias na semana (R$ 70)</option>
+                                    <option value="2 Dias">2 Dias na semana (R$ 60)</option>
+                                </select>
+                                {formData.plano_tipo !== 'Todos os dias' && (
+                                    <div className="mt-4 animate-fadeIn">
+                                        <div className="grid grid-cols-5 gap-1">
+                                            {DIAS_SEMANA.map(dia => (
+                                                <button key={dia} type="button" onClick={()=>toggleDia(dia)} className={`py-3 rounded-xl text-[10px] font-black uppercase border-2 transition-all shadow-sm ${formData.plano_dias?.includes(dia) ? 'bg-blue-600 border-blue-600 text-white' : 'bg-slate-100 border-slate-200 text-slate-600'}`}>{dia.substring(0,3)}</button>
+                                            ))}
+                                        </div>
                                     </div>
                                 )}
                             </div>
-                            <div className="space-y-6">
-                                <div>
-                                    <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Alergias e Remédios</p>
-                                    <div className="bg-white p-4 rounded-3xl border border-red-100 text-sm text-slate-600 italic shadow-inner">
-                                        {a.alergias || 'Nenhuma alergia ou remédio registrado.'}
-                                    </div>
-                                </div>
-                                <div>
-                                    <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Observações Especiais / Responsáveis</p>
-                                    <div className="bg-white p-4 rounded-3xl border border-slate-100 text-sm text-slate-600 shadow-inner">
-                                        {a.detalhes_condicao || 'Sem observações adicionais.'}
-                                    </div>
-                                </div>
+                            <div className="grid grid-cols-1 gap-3">
+                                <label className="flex items-center gap-4 p-4 rounded-2xl border bg-slate-50 cursor-pointer"><input type="checkbox" checked={formData.bolsista_jiujitsu || false} onChange={e=>setFormData({...formData, bolsista_jiujitsu: e.target.checked})} /><span className="font-bold">Bolsista Jiu-Jitsu (Isento)</span></label>
+                                <label className="flex items-center gap-4 p-4 rounded-2xl border bg-slate-50 cursor-pointer"><input type="checkbox" checked={formData.bolsista_musculacao || false} onChange={e=>setFormData({...formData, bolsista_musculacao: e.target.checked})} /><span className="font-bold">Bolsista Musculação (Paga Normal)</span></label>
+                                <label className="flex items-center gap-4 p-4 rounded-2xl border bg-slate-50 cursor-pointer"><input type="checkbox" checked={formData.atleta || false} onChange={e=>setFormData({...formData, atleta: e.target.checked})} /><span className="font-bold">Aluno Atleta</span></label>
                             </div>
                         </div>
                     </div>
-                </div>
+
+                    <div className="flex gap-4 pb-10">
+                        <button type="button" onClick={handleVoltarLista} className="flex-1 bg-white text-slate-400 py-5 rounded-[2rem] font-bold border border-slate-200 hover:bg-slate-50">CANCELAR</button>
+                        <button type="submit" className="flex-[2] bg-slate-900 text-white py-5 rounded-[2rem] font-black uppercase tracking-widest hover:bg-black shadow-xl">SALVAR CADASTRO</button>
+                    </div>
+                </form>
             </div>
         </div>
-    );
-  }
+      )}
 
-  if (viewState === 'form') {
-      return (
-          <div className="bg-slate-50 min-h-screen p-2 md:p-6 animate-fadeIn">
-              <div className="max-w-4xl mx-auto">
-                  <div className="flex items-center justify-between mb-8 italic uppercase font-black text-slate-800">
-                      <button onClick={handleVoltarLista} className="p-2 hover:bg-white rounded-full transition-colors"><ChevronLeft size={28}/></button>
-                      <h2 className="text-2xl">{editMode ? 'Editar Perfil' : 'Novo Aluno'}</h2>
-                      <div className="w-10"></div>
-                  </div>
-
-                  <form onSubmit={handleSubmit} className="space-y-6">
-                      <div className="flex flex-col items-center gap-4 mb-8">
-                          <div className="relative">
-                              <div className="w-36 h-36 rounded-[2.5rem] bg-white border-4 border-white shadow-2xl overflow-hidden flex items-center justify-center">
-                                  {formData.foto_url ? <img src={formData.foto_url} className="w-full h-full object-cover" /> : <User size={50} className="text-slate-200" />}
-                                  {uploading && <div className="absolute inset-0 bg-black/40 flex items-center justify-center text-white text-[10px] font-black uppercase">Enviando...</div>}
-                              </div>
-                              <label className="absolute bottom-[-5px] right-[-5px] bg-blue-600 text-white p-3 rounded-2xl shadow-xl cursor-pointer hover:scale-110 transition-all">
-                                  <Plus size={24} /><input type="file" className="hidden" accept="image/*" onChange={handleFotoUpload} disabled={uploading} />
-                              </label>
-                          </div>
-                      </div>
-
-                      <div className="bg-white rounded-[2.5rem] p-6 md:p-10 shadow-xl border border-white">
-                          <div className="flex items-center gap-3 mb-8 text-blue-600"><User size={24}/><h3 className="text-xl font-bold text-slate-800">Dados Pessoais</h3></div>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                              <div className="md:col-span-2">
-                                  <label className="text-xs font-bold text-slate-400 uppercase ml-1">Nome Completo <span className="text-red-500">*</span></label>
-                                  <input className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-medium focus:ring-2 focus:ring-blue-500" value={formData.nome || ''} onChange={e=>setFormData({...formData, nome: e.target.value})} placeholder="Ex: Jackson Lima" />
-                              </div>
-                              <div>
-                                  <label className="text-xs font-bold text-slate-400 uppercase ml-1">Aniversário <span className="text-red-500">*</span></label>
-                                  <input type="date" className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-medium text-slate-600 focus:ring-2 focus:ring-blue-500" value={formData.data_nascimento || ''} onChange={e=>setFormData({...formData, data_nascimento: e.target.value})} />
-                              </div>
-                              <div>
-                                  <label className="text-xs font-bold text-slate-400 uppercase ml-1">Data de Matrícula</label>
-                                  <input type="date" className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-medium text-slate-600 focus:ring-2 focus:ring-blue-500" value={formData.data_matricula || ''} onChange={e=>setFormData({...formData, data_matricula: e.target.value})} />
-                              </div>
-                              
-                              <div>
-                                  <label className="text-xs font-bold text-slate-400 uppercase ml-1">Turma <span className="text-red-500">*</span></label>
-                                  <select 
-                                      className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-bold text-blue-600" 
-                                      value={formData.categoria} 
-                                      onChange={e => {
-                                          const novaCategoria = e.target.value as any;
-                                          let novoPlano = formData.plano_tipo || 'Todos os dias';
-                                          let novosDias = formData.plano_dias || [];
-
-                                          if (novaCategoria === 'Kids') {
-                                              novoPlano = '2 Dias';
-                                              novosDias = ['Terça', 'Quinta'];
-                                          } else if (novaCategoria === 'Infantil') {
-                                              novoPlano = '3 Dias';
-                                              novosDias = ['Segunda', 'Quarta', 'Sexta'];
-                                          } else if (novaCategoria === 'Adulto') {
-                                              novoPlano = 'Todos os dias';
-                                              novosDias = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
-                                          }
-
-                                          setFormData({
-                                              ...formData, 
-                                              categoria: novaCategoria,
-                                              plano_tipo: novoPlano,
-                                              plano_dias: novosDias
-                                          });
-                                      }}
-                                  >
-                                      <option value="Adulto">🥋 Adulto</option>
-                                      <option value="Infantil">👦 Infantil</option>
-                                      <option value="Kids">👶 Kids</option>
-                                  </select>
-                              </div>
-
-                              <div>
-                                <label className="text-xs font-bold text-slate-400 uppercase ml-1">Graduação <span className="text-red-500">*</span></label>
-                                <select className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-medium focus:ring-2 focus:ring-blue-500" value={formData.graduacao || ''} onChange={e=>setFormData({...formData, graduacao: e.target.value})}>
-                                    <option value="">Selecione...</option>
-                                    <option>Branca</option><option>Cinza</option><option>Amarela</option><option>Laranja</option><option>Verde</option><option>Azul</option><option>Roxa</option><option>Marrom</option><option>Preta</option>
-                                </select>
-                              </div>
-
-                              <div>
-                                  <label className="text-xs font-bold text-slate-400 uppercase ml-1 flex items-center gap-1">
-                                      {formData.categoria === 'Kids' || formData.categoria === 'Infantil' ? 'WhatsApp (Resp. Financeiro)' : 'WhatsApp'}
-                                  </label>
-                                  <input className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-medium focus:ring-2 focus:ring-blue-500" value={formData.whatsapp || ''} onChange={e=>setFormData({...formData, whatsapp: e.target.value})} placeholder="(00) 00000-0000" />
-                                  {(formData.categoria === 'Kids' || formData.categoria === 'Infantil') && (
-                                      <p className="text-[10px] text-slate-500 mt-1 ml-1 leading-tight">Para outros responsáveis, anote nas observações.</p>
-                                  )}
-                              </div>
-
-                              <div>
-                                  <label className="text-xs font-bold text-slate-400 uppercase ml-1">Status do Aluno</label>
-                                  <select className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-bold text-slate-700" value={formData.status || 'Ativo'} onChange={e=>setFormData({...formData, status: e.target.value})}>
-                                      <option value="Ativo">🟢 Ativo (Treinando)</option>
-                                      <option value="Inativo">🔴 Inativo (Parou)</option>
-                                  </select>
-                              </div>
-                          </div>
-                      </div>
-
-                      <div className="bg-white rounded-[2.5rem] p-6 md:p-10 shadow-xl border border-white">
-                          <div className="flex items-center gap-3 mb-8 text-red-600"><HeartPulse size={24}/><h3 className="text-xl font-bold text-slate-800">Saúde e Cuidados</h3></div>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                              <div className="space-y-6">
-                                  <div><label className="text-xs font-bold text-slate-400 uppercase ml-1">Tipo Sanguíneo</label><select className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2" value={formData.tipo_sanguineo || ''} onChange={e=>setFormData({...formData, tipo_sanguineo: e.target.value})}><option value="">Não informado</option><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option><option>O+</option><option>O-</option></select></div>
-                                  <div className={`p-6 rounded-3xl border-2 transition-all ${formData.neurodivergente ? 'bg-purple-50 border-purple-200' : 'bg-slate-50 border-transparent'}`}>
-                                      <label className="flex items-center justify-between cursor-pointer"><div className="flex items-center gap-3"><Brain className={formData.neurodivergente ? 'text-purple-600' : 'text-slate-300'} size={24}/><span className={`font-bold ${formData.neurodivergente ? 'text-purple-700' : 'text-slate-400'}`}>Neurodivergente?</span></div><input type="checkbox" className="w-6 h-6 rounded-lg text-purple-600 border-none bg-white shadow-sm" checked={formData.neurodivergente || false} onChange={e => setFormData({...formData, neurodivergente: e.target.checked})} /></label>
-                                      {formData.neurodivergente && <input className="w-full bg-white border-none rounded-xl p-3 mt-4 text-sm font-bold text-purple-600" placeholder="Qual o tipo? (Ex: TDAH)" value={formData.neurodivergencia_tipo || ''} onChange={e => setFormData({...formData, neurodivergencia_tipo: e.target.value})} />}
-                                  </div>
-                              </div>
-                              <div className="space-y-6">
-                                  <div><label className="text-xs font-bold text-slate-400 uppercase">Alergias e Remédios</label><textarea className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 h-24 focus:ring-2 focus:ring-red-400" value={formData.alergias || ''} onChange={e=>setFormData({...formData, alergias: e.target.value})} /></div>
-                                  <div><label className="text-xs font-bold text-slate-400 uppercase">Observações (Outros Responsáveis)</label><textarea className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 h-24" value={formData.detalhes_condicao || ''} onChange={e=>setFormData({...formData, detalhes_condicao: e.target.value})} /></div>
-                              </div>
-                          </div>
-                      </div>
-
-                      <div className="bg-white rounded-[2.5rem] p-6 md:p-10 shadow-xl border border-white">
-                          <div className="flex items-center gap-3 mb-8 text-yellow-600"><Medal size={24}/><h3 className="text-xl font-bold text-slate-800">Planos & Atleta</h3></div>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                              <div className="space-y-4">
-                                  <label className="text-xs font-bold text-slate-400 uppercase">Plano Escolhido</label>
-                                  <select className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-bold text-slate-700" value={formData.plano_tipo || 'Todos os dias'} onChange={e=>setFormData({...formData, plano_tipo: e.target.value})}>
-                                      <option value="Todos os dias">Todos os dias (R$ 80)</option>
-                                      <option value="3 Dias">3 Dias na semana (R$ 70)</option>
-                                      <option value="2 Dias">2 Dias na semana (R$ 60)</option>
-                                  </select>
-                                  {formData.plano_tipo !== 'Todos os dias' && (
-                                      <div className="mt-4 animate-fadeIn">
-                                          <div className="grid grid-cols-5 gap-1">
-                                              {DIAS_SEMANA.map(dia => (
-                                                  <button key={dia} type="button" onClick={()=>toggleDia(dia)} className={`py-3 rounded-xl text-[10px] font-black uppercase border-2 transition-all shadow-sm ${formData.plano_dias?.includes(dia) ? 'bg-blue-600 border-blue-600 text-white' : 'bg-slate-100 border-slate-200 text-slate-600'}`}>{dia.substring(0,3)}</button>
-                                              ))}
-                                          </div>
-                                      </div>
-                                  )}
-                              </div>
-                              <div className="grid grid-cols-1 gap-3">
-                                  <label className="flex items-center gap-4 p-4 rounded-2xl border bg-slate-50 cursor-pointer"><input type="checkbox" checked={formData.bolsista_jiujitsu || false} onChange={e=>setFormData({...formData, bolsista_jiujitsu: e.target.checked})} /><span className="font-bold">Bolsista Jiu-Jitsu (Isento)</span></label>
-                                  <label className="flex items-center gap-4 p-4 rounded-2xl border bg-slate-50 cursor-pointer"><input type="checkbox" checked={formData.bolsista_musculacao || false} onChange={e=>setFormData({...formData, bolsista_musculacao: e.target.checked})} /><span className="font-bold">Bolsista Musculação (Paga Normal)</span></label>
-                                  <label className="flex items-center gap-4 p-4 rounded-2xl border bg-slate-50 cursor-pointer"><input type="checkbox" checked={formData.atleta || false} onChange={e=>setFormData({...formData, atleta: e.target.checked})} /><span className="font-bold">Aluno Atleta</span></label>
-                              </div>
-                          </div>
-                      </div>
-
-                      <div className="flex gap-4 pb-10">
-                          <button type="button" onClick={handleVoltarLista} className="flex-1 bg-white text-slate-400 py-5 rounded-[2rem] font-bold border border-slate-200 hover:bg-slate-50">CANCELAR</button>
-                          <button type="submit" className="flex-[2] bg-slate-900 text-white py-5 rounded-[2rem] font-black uppercase tracking-widest hover:bg-black shadow-xl">SALVAR CADASTRO</button>
-                      </div>
-                  </form>
-              </div>
-          </div>
-      );
-  }
-
-  return (
-    <div className="space-y-6 animate-fadeIn pb-20">
-      <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
-          <h2 className="text-2xl font-bold text-slate-800 italic uppercase tracking-tighter">Gerenciar Alunos</h2>
-          <button onClick={handleNovoAluno} className="bg-slate-900 text-white px-6 py-3 rounded-2xl flex items-center gap-2 hover:bg-black shadow-lg transition-all font-bold text-sm w-full sm:w-auto justify-center"><Plus size={20}/> NOVO ALUNO</button>
-      </div>
-      
-      <div className="flex gap-2 flex-wrap">
-          <div className="flex bg-slate-200 p-1 rounded-2xl gap-1 overflow-x-auto flex-1">
-              {['Adulto', 'Infantil', 'Kids'].map(c => (<button key={c} onClick={()=>{setTabAtual(c as any); setFiltroDevedores(false);}} className={`flex-1 px-6 py-3 rounded-xl font-bold text-sm transition-all ${tabAtual===c && !filtroDevedores ? 'bg-white text-blue-600 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>{c}</button>))}
-          </div>
-          <button 
-            onClick={() => setFiltroDevedores(!filtroDevedores)} 
-            className={`px-6 py-3 rounded-2xl font-bold text-sm flex items-center gap-2 transition-all ${filtroDevedores ? 'bg-red-600 text-white shadow-lg' : 'bg-red-50 text-red-600 border border-red-100'}`}
-          >
-            <AlertTriangle size={18} /> Inadimplentes
-          </button>
-      </div>
-
-      <div className="bg-white rounded-[2rem] shadow-sm overflow-hidden border border-slate-100">
-           <table className="w-full text-left">
-             <thead className="bg-slate-50 text-slate-400 text-[10px] uppercase font-black tracking-widest"><tr><th className="p-5">Informação</th><th className="p-5 text-center">Status Pagto</th><th className="p-5 text-right">Ações</th></tr></thead>
-             <tbody className="divide-y divide-slate-50">
-                {filteredAlunos.map(aluno => (
-                   <tr key={aluno.id} className="hover:bg-slate-50/50 transition-colors">
-                      <td className="p-4 cursor-pointer group" onClick={() => { setSelectedAluno(aluno); setViewState('details'); }}>
-                          <div className="flex items-center gap-4">
-                              <div className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center relative border border-slate-200 overflow-hidden shadow-inner">
-                                  {aluno.foto_url ? <img src={aluno.foto_url} className="w-full h-full object-cover" /> : <User className="text-slate-300" size={24}/>}
-                                  {aluno.neurodivergente && <div className="absolute top-1 right-1 bg-purple-600 text-white p-1 rounded-full border border-white shadow-sm"><Brain size={10}/></div>}
-                              </div>
-                              <div>
-                                  <div className="font-bold text-slate-800 flex items-center gap-2 group-hover:text-blue-600">
-                                      {aluno.nome}
-                                      {aluno.status === 'Inativo' && <span className="bg-red-100 text-red-600 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">Inativo</span>}
-                                      {isAniversariante(aluno.data_nascimento) && (
-                                        <span className="bg-pink-100 text-pink-700 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 uppercase italic">
-                                          Aniv. <Cake size={14} className="animate-bounce" />
-                                        </span>
-                                      )}
-                                      {aluno.atleta && <span className="w-2 h-2 rounded-full bg-blue-500" title="Atleta"></span>}
-                                  </div>
-                                  <div className="flex gap-2 mt-1">
-                                      <span className="text-[10px] font-black uppercase text-slate-400 bg-slate-100 px-2 py-0.5 rounded">{aluno.graduacao}</span>
-                                      {aluno.bolsista_jiujitsu && <span className="text-[10px] font-black uppercase bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded">Bols. Isento</span>}
-                                      {(aluno.divida_loja || 0) > 0 && <span className="text-[10px] font-black uppercase bg-red-100 text-red-600 px-2 py-0.5 rounded">Deve Loja</span>}
-                                  </div>
-                              </div>
-                          </div>
-                      </td>
-                      <td className="p-4 text-center">
-                          {aluno.status === 'Inativo' ? (
-                              <div className="text-xs font-bold text-slate-400 border border-slate-200 px-4 py-2 rounded-xl inline-flex">-</div>
-                          ) : aluno.pago_mes_atual ? (
-                              <div className="bg-green-50 text-green-600 px-4 py-2 rounded-xl text-xs font-bold inline-flex items-center gap-2 border border-green-100"><CheckCircle size={14}/> {aluno.bolsista_jiujitsu ? 'ISENTO' : 'PAGO'}</div>
-                          ) : (
-                              <div className="flex items-center justify-center gap-3">
-                                  <span className="text-[10px] font-black text-red-400 uppercase tracking-tighter">Pendente</span>
-                                  <button onClick={(e) => { e.stopPropagation(); abrirModalPagamento(aluno, mesAtualRef); }} className="w-10 h-10 bg-green-500 text-white rounded-xl hover:bg-green-600 shadow-md flex items-center justify-center transition-all hover:scale-110"><DollarSign size={20} /></button>
-                              </div>
-                          )}
-                      </td>
-                      <td className="p-4 text-right">
-                          <div className="flex justify-end gap-1">
-                            <button onClick={(e)=>{ e.stopPropagation(); setFormData(aluno); setEditMode(true); setViewState('form')}} className="p-3 text-slate-400 hover:text-blue-600 rounded-xl transition-all"><Edit size={20}/></button>
-                            <button onClick={(e)=>{ e.stopPropagation(); setCustomAlert({ show: true, id: aluno.id, nome: aluno.nome }); }} className="p-3 text-slate-400 hover:text-red-500 rounded-xl transition-all"><Trash2 size={20}/></button>
-                          </div>
-                      </td>
-                   </tr>
-                ))}
-             </tbody>
-           </table>
-      </div>
+      {/* ==================================================== */}
+      {/* MODAIS GLOBAIS (APARECEM POR CIMA DE QUALQUER TELA)  */}
+      {/* ==================================================== */}
 
       {/* MODAL PAGAMENTO */}
       {pagamentoModal.show && (() => {
@@ -995,7 +1030,7 @@ export default function Alunos() {
           </div>
       )}
 
-      {/* RECIBO INVISÍVEL (FANTASMA) COM TAMANHO FIXO PARA O PDF NUNCA FICAR FINO */}
+      {/* RECIBO INVISÍVEL (FANTASMA) COM TAMANHO FIXO PARA O PDF */}
       {reciboModal?.show && (
           <div style={{ position: 'fixed', top: '-10000px', left: '-10000px', zIndex: -9999, opacity: 0 }}>
               <div ref={reciboRef} style={{ width: '800px', backgroundColor: '#ffffff', padding: '60px', fontFamily: 'sans-serif' }}>
@@ -1063,7 +1098,7 @@ export default function Alunos() {
           </div>
       )}
 
-      {/* CUSTOM ALERT E ALERT DE FORÇAR EXCLUSÃO ABAIXO */}
+      {/* ALERT DE EXCLUSÃO */}
       {customAlert.show && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[999] animate-fadeIn">
           <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-sm shadow-2xl text-center">
@@ -1078,6 +1113,7 @@ export default function Alunos() {
         </div>
       )}
 
+      {/* ALERT DE EXCLUSÃO FORÇADA */}
       {forceDeleteAlert.show && (
         <div className="fixed inset-0 bg-red-900/80 backdrop-blur-md flex items-center justify-center p-4 z-[1000] animate-fadeIn">
           <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-md shadow-2xl text-center border-4 border-red-500">
