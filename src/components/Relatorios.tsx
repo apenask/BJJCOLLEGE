@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { FileText, Printer, Search, Calendar, Banknote, QrCode, CreditCard, Download, FileSpreadsheet, MessageCircle, Copy, X, Share2 } from 'lucide-react';
 import { format } from 'date-fns';
-import { useToast } from '../contexts/ToastContext'; // Importando Toast para feedback visual
+import { useToast } from '../contexts/ToastContext';
 
 export default function Relatorios() {
   const { addToast } = useToast();
@@ -20,12 +20,19 @@ export default function Relatorios() {
   async function gerarRelatorio() {
     setLoading(true);
     try {
-      const { data: transacoes } = await supabase.from('transacoes').select(`*, alunos (nome, categoria)`).gte('data', dataInicio).lte('data', dataFim).order('data', { ascending: true });
+      // CORREÇÃO DEFINITIVA: Filtramos direto no banco (.neq)
+      // Trazemos apenas o que NÃO for Pendente e NÃO for Conta a Pagar
+      const { data: transacoes } = await supabase
+        .from('transacoes')
+        .select(`*, alunos (nome, categoria)`)
+        .gte('data', dataInicio)
+        .lte('data', dataFim)
+        .neq('tipo', 'Pendente')        // BLINDAGEM 1: Remove Fiado/Pendente na fonte
+        .neq('tipo', 'Conta a Pagar')   // BLINDAGEM 2: Remove Contas Futuras na fonte
+        .order('data', { ascending: true });
       
+      // Filtro local apenas para categorias (Turmas/Loja)
       const filtrados = transacoes?.filter(t => {
-        // BLINDAGEM: Ignora 'Conta a Pagar'
-        if (t.tipo === 'Conta a Pagar') return false; 
-
         if (filtroTurma === 'Geral') return true;
         if (filtroTurma === 'Loja') return t.categoria === 'Venda Loja';
         if (t.tipo === 'Receita' && t.alunos) return t.alunos.categoria === filtroTurma;
@@ -34,7 +41,12 @@ export default function Relatorios() {
       
       processarTotais(filtrados);
       setResultado(filtrados);
-    } catch (error) { console.error(error); } finally { setLoading(false); }
+    } catch (error) { 
+        console.error(error); 
+        addToast('Erro ao gerar relatório', 'error');
+    } finally { 
+        setLoading(false); 
+    }
   }
 
   function processarTotais(lista: any[]) {
@@ -42,7 +54,8 @@ export default function Relatorios() {
       lista.forEach(t => {
           const valor = Number(t.valor);
           if (t.tipo === 'Despesa') { desp += valor; return; }
-          // Se passou daqui, é Receita
+          
+          // Se passou daqui, é Receita CONFIRMADA
           rec += valor;
           if (t.detalhes_pagamento) {
               const dp = t.detalhes_pagamento;
@@ -111,7 +124,7 @@ export default function Relatorios() {
       window.open(url, '_blank');
   }
 
-  // EXCEL (Mantido)
+  // EXCEL
   function exportarExcel() {
     if (!resultado) return;
     let tableHTML = `
