@@ -222,13 +222,22 @@ export default function Alunos() {
     } catch (error) { addToast('Erro ao registrar.', 'error'); }
   }
 
+  // --- NOVA FUNÇÃO DE GERAR E COMPARTILHAR PDF ---
   async function gerarECompartilharPDF() {
     if (!reciboRef.current || !reciboModal) return;
     
     try {
-        addToast('Gerando PDF...', 'info');
+        addToast('Gerando PDF, aguarde um momento...', 'info');
         
-        const canvas = await html2canvas(reciboRef.current, { scale: 2, backgroundColor: '#ffffff' });
+        // Verifica se é mobile para reduzir o peso do canvas e não dar erro de memória
+        const isMobile = window.innerWidth <= 768;
+        
+        const canvas = await html2canvas(reciboRef.current, { 
+            scale: isMobile ? 1.5 : 2, 
+            backgroundColor: '#ffffff',
+            useCORS: true
+        });
+
         const imgData = canvas.toDataURL('image/png');
 
         const pdf = new jsPDF({
@@ -247,22 +256,47 @@ export default function Alunos() {
         const nomeArquivo = `Recibo_BJJCollege_Mensalidade_${nomeAlunoFormatado}.pdf`;
 
         const pdfBlob = pdf.output('blob');
-        const file = new File([pdfBlob], nomeArquivo, { type: 'application/pdf' });
+        
+        // Proteção para celulares que dão erro no 'new File'
+        let file: any;
+        try {
+            file = new File([pdfBlob], nomeArquivo, { type: 'application/pdf' });
+        } catch (e) {
+            file = pdfBlob;
+            file.name = nomeArquivo;
+        }
 
+        // SE TIVER COMPARTILHAMENTO NATIVO (CELULAR)
         if (navigator.canShare && navigator.canShare({ files: [file] })) {
-            await navigator.share({
-                files: [file],
-                title: 'Recibo Mensalidade BJJ College',
-                text: `Segue o comprovante de pagamento da mensalidade de ${reciboModal.dados.aluno}. Oss!`,
-            });
-            addToast('Compartilhamento aberto com sucesso!', 'success');
-        } else {
-            pdf.save(nomeArquivo);
-            addToast('PDF baixado! Você pode anexar direto no WhatsApp Web.', 'success');
+            try {
+                await navigator.share({
+                    files: [file],
+                    title: 'Recibo Mensalidade BJJ College',
+                    text: `Segue o comprovante de pagamento da mensalidade de ${reciboModal.dados.aluno}. Oss!`,
+                });
+            } catch (shareError: any) {
+                // AbortError é apenas quando o usuário arrasta para baixo e fecha a telinha de compartilhar
+                if (shareError.name !== 'AbortError') {
+                    addToast('Erro ao usar o compartilhar nativo. Tentando abrir navegador...', 'warning');
+                    const pdfUrl = URL.createObjectURL(pdfBlob);
+                    window.open(pdfUrl, '_blank');
+                }
+            }
+        } 
+        // SE ESTIVER NO COMPUTADOR
+        else {
+            const pdfUrl = URL.createObjectURL(pdfBlob);
+            const novaAba = window.open(pdfUrl, '_blank');
+            
+            // Se o navegador (ex: Chrome no PC) bloquear a aba do PDF por conta do AdBlocker
+            if (!novaAba || novaAba.closed || typeof novaAba.closed === 'undefined') {
+                addToast('Pop-up bloqueado. O PDF será baixado...', 'info');
+                pdf.save(nomeArquivo);
+            }
         }
     } catch (error) {
         console.error("Erro ao gerar PDF:", error);
-        addToast('Erro ao processar o PDF.', 'error');
+        addToast('Erro ao processar o PDF. Tente novamente.', 'error');
     }
   }
 
