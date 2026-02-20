@@ -220,14 +220,14 @@ export default function Alunos() {
     } catch (error) { addToast('Erro ao registrar.', 'error'); }
   }
 
-  // --- NOVA FUNÇÃO DE GERAR PDF DESENHADO DO ZERO ---
+  // --- NOVA FUNÇÃO COM SUPORTE BLINDADO PARA IPHONE ---
   async function gerarECompartilharPDF() {
     if (!reciboModal) return;
     
     try {
         addToast('Gerando...', 'info');
         
-        // Criação do PDF do ZERO
+        // 1. Criação do PDF do ZERO (Super Leve)
         const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
         const dados = reciboModal.dados;
 
@@ -319,37 +319,60 @@ export default function Alunos() {
         pdf.setTextColor(150, 150, 150);
         pdf.text("Obrigado por treinar conosco! Oss!", 105, yPos + 20, { align: "center" });
 
-        // Geração e Compartilhamento
+        // 2. Geração e Preparação do Arquivo
         const nomeAlunoFormatado = dados.aluno.replace(/\s+/g, '_');
         const nomeArquivo = `Recibo_BJJCollege_Mensalidade_${nomeAlunoFormatado}.pdf`;
         const pdfBlob = pdf.output('blob');
-        
-        let file: any;
+
+        // Detector de iPhone/iPad/Mac
+        const isAppleDevice = /Mac|iPod|iPhone|iPad/.test(navigator.platform) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+        let file: File | null = null;
         try {
             file = new File([pdfBlob], nomeArquivo, { type: 'application/pdf' });
         } catch (e) {
-            file = pdfBlob;
-            file.name = nomeArquivo;
+            console.warn("Navegador restrito, ignorando criador de File");
         }
 
-        // Tenta usar o compartilhamento nativo do celular
-        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        // PLANO A: Tenta o Compartilhamento Nativo (Funciona muito bem no Android)
+        let shareSuccess = false;
+        if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
             try {
                 await navigator.share({
                     files: [file],
                     title: 'Recibo BJJ College'
                 });
-                return; 
+                shareSuccess = true;
             } catch (shareError: any) {
+                // Se for AbortError, o usuário só cancelou a tela, não é erro
                 if (shareError.name !== 'AbortError') {
-                    addToast('Erro ao usar o compartilhar nativo.', 'warning');
+                    console.warn("Share nativo bloqueado", shareError);
+                } else {
+                    return; 
                 }
             }
         } 
-        
-        // Fallback: Se não conseguir compartilhar (PC ou Safari restrito), faz o download direto
-        pdf.save(nomeArquivo);
-        addToast('Download do PDF realizado!', 'success');
+
+        // PLANO B / C: Se falhou ou é iPhone
+        if (!shareSuccess) {
+            if (isAppleDevice) {
+                // No iPhone, o download direto falha. Precisamos abrir em nova aba para ele usar o share do Safari
+                const objectUrl = URL.createObjectURL(pdfBlob);
+                const newTab = window.open(objectUrl, '_blank');
+                
+                if (!newTab) {
+                    // Se o popup for bloqueado
+                    addToast('Popup bloqueado. Baixando...', 'warning');
+                    pdf.save(nomeArquivo);
+                } else {
+                    addToast('PDF Aberto! Use o botão do iPhone para compartilhar.', 'success');
+                }
+            } else {
+                // PC ou Android que não tem Share Nativo
+                pdf.save(nomeArquivo);
+                addToast('Download concluído!', 'success');
+            }
+        }
 
     } catch (error) {
         console.error("Erro crítico ao gerar PDF:", error);
@@ -1004,7 +1027,7 @@ export default function Alunos() {
                           onClick={gerarECompartilharPDF} 
                           className="w-full bg-green-600 text-white py-4 rounded-2xl font-black uppercase flex items-center justify-center gap-2 hover:bg-green-700 shadow-xl shadow-green-200/50 transition-all"
                       >
-                          Compartilhar
+                          <Share2 size={20}/> Compartilhar
                       </button>
                   </div>
               </div>
