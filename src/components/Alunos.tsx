@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { 
   Plus, Edit, Trash2, User, CheckCircle, 
@@ -8,7 +8,6 @@ import {
 import { startOfMonth, endOfMonth, format } from 'date-fns';
 import { useToast } from '../contexts/ToastContext';
 import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
 
 interface Aluno {
   id: string;
@@ -38,7 +37,6 @@ const DIAS_SEMANA = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
 
 export default function Alunos() {
   const { addToast } = useToast();
-  const reciboRef = useRef<HTMLDivElement>(null); 
   
   const [alunos, setAlunos] = useState<Aluno[]>([]);
   const [loading, setLoading] = useState(true);
@@ -222,65 +220,136 @@ export default function Alunos() {
     } catch (error) { addToast('Erro ao registrar.', 'error'); }
   }
 
-  // --- FUNÇÃO BLINDADA PARA GERAR PDF (MÓVEL E PC) ---
+  // --- NOVA FUNÇÃO DE GERAR PDF DESENHADO DO ZERO ---
   async function gerarECompartilharPDF() {
-    if (!reciboRef.current || !reciboModal) return;
+    if (!reciboModal) return;
     
     try {
         addToast('Gerando...', 'info');
         
-        const isMobile = window.innerWidth <= 768;
+        // Criação do PDF do ZERO
+        const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+        const dados = reciboModal.dados;
+
+        // Cabeçalho
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(22);
+        pdf.text("BJJ COLLEGE", 105, 20, { align: "center" });
+
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(12);
+        pdf.setTextColor(100, 100, 100);
+        pdf.text("RECIBO DE PAGAMENTO", 105, 28, { align: "center" });
+
+        // Linha Divisória
+        pdf.setLineWidth(0.5);
+        pdf.setDrawColor(200, 200, 200);
+        pdf.line(20, 35, 190, 35);
+
+        // Informações do Pagamento
+        pdf.setTextColor(0, 0, 0);
+        pdf.setFontSize(11);
         
-        // Scale 1 no celular para não estourar a memória RAM e travar
-        const canvas = await html2canvas(reciboRef.current, { 
-            scale: isMobile ? 1 : 2, 
-            backgroundColor: '#ffffff',
-            useCORS: true,
-            logging: false
+        // Data
+        pdf.setFont("helvetica", "bold");
+        pdf.text("Data:", 20, 45);
+        pdf.setFont("helvetica", "normal");
+        pdf.text(format(dados.data, 'dd/MM/yyyy HH:mm'), 50, 45);
+
+        // Aluno
+        pdf.setFont("helvetica", "bold");
+        pdf.text("Aluno:", 20, 55);
+        pdf.setFont("helvetica", "normal");
+        pdf.text(dados.aluno, 50, 55);
+
+        // Referência
+        pdf.setFont("helvetica", "bold");
+        pdf.text("Referência:", 20, 65);
+        pdf.setFont("helvetica", "normal");
+        pdf.text("Mensalidade", 50, 65);
+
+        // Operador
+        pdf.setFont("helvetica", "bold");
+        pdf.text("Operador:", 20, 75);
+        pdf.setFont("helvetica", "normal");
+        pdf.text(dados.operador, 50, 75);
+
+        // Bloco de Valores (Fundo cinza claro)
+        pdf.setFillColor(245, 245, 245);
+        pdf.rect(20, 85, 170, 40, "F");
+
+        // Valor Base
+        pdf.setFont("helvetica", "normal");
+        pdf.text("Valor Base:", 25, 95);
+        pdf.text(`R$ ${dados.valorBase.toFixed(2)}`, 185, 95, { align: "right" });
+
+        // Desconto
+        if (dados.desconto > 0) {
+            pdf.setTextColor(220, 38, 38); // Vermelho
+            pdf.text("Desconto:", 25, 105);
+            pdf.text(`- R$ ${dados.desconto.toFixed(2)}`, 185, 105, { align: "right" });
+        }
+
+        // Total Pago
+        pdf.setFont("helvetica", "bold");
+        pdf.setTextColor(0, 0, 0);
+        pdf.setFontSize(14);
+        pdf.text("TOTAL PAGO:", 25, 118);
+        pdf.setTextColor(22, 163, 74); // Verde
+        pdf.text(`R$ ${dados.valorPago.toFixed(2)}`, 185, 118, { align: "right" });
+
+        // Métodos de Pagamento
+        pdf.setTextColor(0, 0, 0);
+        pdf.setFontSize(10);
+        pdf.setFont("helvetica", "bold");
+        pdf.text("MÉTODOS UTILIZADOS:", 20, 140);
+        
+        pdf.setFont("helvetica", "normal");
+        let yPos = 148;
+        dados.metodos.forEach((m: any) => {
+            const nomeMetodo = m.metodo === 'Cartao' ? `Cartão (${m.tipo})` : m.metodo;
+            pdf.text(nomeMetodo, 20, yPos);
+            pdf.text(`R$ ${m.valor.toFixed(2)}`, 190, yPos, { align: "right" });
+            yPos += 7;
         });
 
-        const imgData = canvas.toDataURL('image/png');
-        const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+        // Rodapé
+        pdf.setFontSize(10);
+        pdf.setFont("helvetica", "italic");
+        pdf.setTextColor(150, 150, 150);
+        pdf.text("Obrigado por treinar conosco! Oss!", 105, yPos + 20, { align: "center" });
 
-        const imgProps = pdf.getImageProperties(imgData);
-        const pdfWidth = pdf.internal.pageSize.getWidth();
-        const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
-
-        pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-
-        const nomeAlunoFormatado = reciboModal.dados.aluno.replace(/\s+/g, '_');
+        // Geração e Compartilhamento
+        const nomeAlunoFormatado = dados.aluno.replace(/\s+/g, '_');
         const nomeArquivo = `Recibo_BJJCollege_Mensalidade_${nomeAlunoFormatado}.pdf`;
         const pdfBlob = pdf.output('blob');
         
-        // PLANO A: Tentar usar o compartilhamento nativo do celular (WhatsApp, etc)
+        let file: any;
         try {
-            const file = new File([pdfBlob], nomeArquivo, { type: 'application/pdf' });
-            if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            file = new File([pdfBlob], nomeArquivo, { type: 'application/pdf' });
+        } catch (e) {
+            file = pdfBlob;
+            file.name = nomeArquivo;
+        }
+
+        // Tenta usar o compartilhamento nativo do celular
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            try {
                 await navigator.share({
                     files: [file],
                     title: 'Recibo BJJ College'
                 });
-                return; // Se abriu o menu de compartilhar, encerra aqui.
+                return; 
+            } catch (shareError: any) {
+                if (shareError.name !== 'AbortError') {
+                    addToast('Erro ao usar o compartilhar nativo.', 'warning');
+                }
             }
-        } catch (e) {
-            console.log("Compartilhamento nativo falhou ou cancelado", e);
-        }
-
-        // PLANO B: Abrir o PDF direto em uma nova aba do celular/PC
-        try {
-            const pdfUrl = URL.createObjectURL(pdfBlob);
-            const novaAba = window.open(pdfUrl, '_blank');
-            if (novaAba) {
-                addToast('PDF aberto em nova aba!', 'success');
-                return; // Se abriu a aba, encerra aqui.
-            }
-        } catch (e) {
-            console.log("Falha ao abrir nova aba", e);
-        }
-
-        // PLANO C: Forçar o download (Ideal para PCs)
+        } 
+        
+        // Fallback: Se não conseguir compartilhar (PC ou Safari restrito), faz o download direto
         pdf.save(nomeArquivo);
-        addToast('Download iniciado!', 'success');
+        addToast('Download do PDF realizado!', 'success');
 
     } catch (error) {
         console.error("Erro crítico ao gerar PDF:", error);
@@ -883,13 +952,13 @@ export default function Alunos() {
           );
       })()}
 
-      {/* MODAL RECIBO DE PAGAMENTO COM OPÇÃO DE PDF */}
+      {/* MODAL RECIBO DE PAGAMENTO */}
       {reciboModal?.show && (
           <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 z-[9999] animate-fadeIn">
               <div className="w-full max-w-sm relative">
                   <button onClick={() => setReciboModal(null)} className="absolute -top-4 -right-4 z-10 p-2 bg-white rounded-full shadow-lg hover:bg-slate-100"><X size={20}/></button>
 
-                  <div ref={reciboRef} className="bg-white rounded-[2rem] p-8 shadow-2xl relative w-full overflow-hidden">
+                  <div className="bg-white rounded-[2rem] p-8 shadow-2xl relative w-full overflow-hidden">
                       <div className="text-center relative z-10">
                           <div className="w-16 h-16 bg-slate-900 text-white rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
                               <CheckCircle size={32} />
@@ -933,7 +1002,7 @@ export default function Alunos() {
                   <div className="flex mt-4">
                       <button 
                           onClick={gerarECompartilharPDF} 
-                          className="w-full bg-green-600 text-white py-4 rounded-2xl font-black uppercase flex items-center justify-center hover:bg-green-700 shadow-xl shadow-green-200/50 transition-all"
+                          className="w-full bg-green-600 text-white py-4 rounded-2xl font-black uppercase flex items-center justify-center gap-2 hover:bg-green-700 shadow-xl shadow-green-200/50 transition-all"
                       >
                           Compartilhar
                       </button>
