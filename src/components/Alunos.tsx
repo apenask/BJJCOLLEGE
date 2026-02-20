@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { 
   Plus, Edit, Trash2, User, CheckCircle, 
@@ -8,6 +8,7 @@ import {
 import { startOfMonth, endOfMonth, format } from 'date-fns';
 import { useToast } from '../contexts/ToastContext';
 import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 
 interface Aluno {
   id: string;
@@ -37,6 +38,7 @@ const DIAS_SEMANA = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
 
 export default function Alunos() {
   const { addToast } = useToast();
+  const reciboRef = useRef<HTMLDivElement>(null); 
   
   const [alunos, setAlunos] = useState<Aluno[]>([]);
   const [loading, setLoading] = useState(true);
@@ -220,158 +222,72 @@ export default function Alunos() {
     } catch (error) { addToast('Erro ao registrar.', 'error'); }
   }
 
-  // --- NOVA FUNÇÃO COM SUPORTE BLINDADO PARA IPHONE ---
+  // --- FUNÇÃO BLINDADA COM RECIBO "FANTASMA" DE LARGURA FIXA ---
   async function gerarECompartilharPDF() {
-    if (!reciboModal) return;
+    if (!reciboRef.current || !reciboModal) return;
     
     try {
-        addToast('Gerando...', 'info');
+        addToast('Gerando documento em alta qualidade...', 'info');
         
-        // 1. Criação do PDF do ZERO (Super Leve)
-        const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-        const dados = reciboModal.dados;
+        // Bloqueia rolagem temporariamente para o canvas não falhar no iOS
+        const originalOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
 
-        // Cabeçalho
-        pdf.setFont("helvetica", "bold");
-        pdf.setFontSize(22);
-        pdf.text("BJJ COLLEGE", 105, 20, { align: "center" });
-
-        pdf.setFont("helvetica", "normal");
-        pdf.setFontSize(12);
-        pdf.setTextColor(100, 100, 100);
-        pdf.text("RECIBO DE PAGAMENTO", 105, 28, { align: "center" });
-
-        // Linha Divisória
-        pdf.setLineWidth(0.5);
-        pdf.setDrawColor(200, 200, 200);
-        pdf.line(20, 35, 190, 35);
-
-        // Informações do Pagamento
-        pdf.setTextColor(0, 0, 0);
-        pdf.setFontSize(11);
-        
-        // Data
-        pdf.setFont("helvetica", "bold");
-        pdf.text("Data:", 20, 45);
-        pdf.setFont("helvetica", "normal");
-        pdf.text(format(dados.data, 'dd/MM/yyyy HH:mm'), 50, 45);
-
-        // Aluno
-        pdf.setFont("helvetica", "bold");
-        pdf.text("Aluno:", 20, 55);
-        pdf.setFont("helvetica", "normal");
-        pdf.text(dados.aluno, 50, 55);
-
-        // Referência
-        pdf.setFont("helvetica", "bold");
-        pdf.text("Referência:", 20, 65);
-        pdf.setFont("helvetica", "normal");
-        pdf.text("Mensalidade", 50, 65);
-
-        // Operador
-        pdf.setFont("helvetica", "bold");
-        pdf.text("Operador:", 20, 75);
-        pdf.setFont("helvetica", "normal");
-        pdf.text(dados.operador, 50, 75);
-
-        // Bloco de Valores (Fundo cinza claro)
-        pdf.setFillColor(245, 245, 245);
-        pdf.rect(20, 85, 170, 40, "F");
-
-        // Valor Base
-        pdf.setFont("helvetica", "normal");
-        pdf.text("Valor Base:", 25, 95);
-        pdf.text(`R$ ${dados.valorBase.toFixed(2)}`, 185, 95, { align: "right" });
-
-        // Desconto
-        if (dados.desconto > 0) {
-            pdf.setTextColor(220, 38, 38); // Vermelho
-            pdf.text("Desconto:", 25, 105);
-            pdf.text(`- R$ ${dados.desconto.toFixed(2)}`, 185, 105, { align: "right" });
-        }
-
-        // Total Pago
-        pdf.setFont("helvetica", "bold");
-        pdf.setTextColor(0, 0, 0);
-        pdf.setFontSize(14);
-        pdf.text("TOTAL PAGO:", 25, 118);
-        pdf.setTextColor(22, 163, 74); // Verde
-        pdf.text(`R$ ${dados.valorPago.toFixed(2)}`, 185, 118, { align: "right" });
-
-        // Métodos de Pagamento
-        pdf.setTextColor(0, 0, 0);
-        pdf.setFontSize(10);
-        pdf.setFont("helvetica", "bold");
-        pdf.text("MÉTODOS UTILIZADOS:", 20, 140);
-        
-        pdf.setFont("helvetica", "normal");
-        let yPos = 148;
-        dados.metodos.forEach((m: any) => {
-            const nomeMetodo = m.metodo === 'Cartao' ? `Cartão (${m.tipo})` : m.metodo;
-            pdf.text(nomeMetodo, 20, yPos);
-            pdf.text(`R$ ${m.valor.toFixed(2)}`, 190, yPos, { align: "right" });
-            yPos += 7;
+        // O segredo: ele captura o recibo fantasma que tem exatamente 800px cravados
+        const canvas = await html2canvas(reciboRef.current, { 
+            scale: 2, 
+            backgroundColor: '#ffffff',
+            useCORS: true,
+            logging: false,
+            windowWidth: 800 
         });
 
-        // Rodapé
-        pdf.setFontSize(10);
-        pdf.setFont("helvetica", "italic");
-        pdf.setTextColor(150, 150, 150);
-        pdf.text("Obrigado por treinar conosco! Oss!", 105, yPos + 20, { align: "center" });
+        document.body.style.overflow = originalOverflow;
 
-        // 2. Geração e Preparação do Arquivo
-        const nomeAlunoFormatado = dados.aluno.replace(/\s+/g, '_');
-        const nomeArquivo = `Recibo_BJJCollege_Mensalidade_${nomeAlunoFormatado}.pdf`;
+        const imgData = canvas.toDataURL('image/png');
+        const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+
+        const imgProps = pdf.getImageProperties(imgData);
+        const pdfWidth = pdf.internal.pageSize.getWidth();
+        const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+
+        pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+
+        const nomeAlunoFormatado = reciboModal.dados.aluno.replace(/\s+/g, '_');
+        const nomeArquivo = `Recibo_BJJCollege_${nomeAlunoFormatado}.pdf`;
         const pdfBlob = pdf.output('blob');
 
-        // Detector de iPhone/iPad/Mac
-        const isAppleDevice = /Mac|iPod|iPhone|iPad/.test(navigator.platform) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-
-        let file: File | null = null;
-        try {
-            file = new File([pdfBlob], nomeArquivo, { type: 'application/pdf' });
-        } catch (e) {
-            console.warn("Navegador restrito, ignorando criador de File");
-        }
-
-        // PLANO A: Tenta o Compartilhamento Nativo (Funciona muito bem no Android)
+        // PLANO A: Tentar forçar o botão de compartilhar nativo (WhatsApp, etc)
         let shareSuccess = false;
-        if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
-            try {
+        try {
+            const file = new File([pdfBlob], nomeArquivo, { type: 'application/pdf' });
+            if (navigator.canShare && navigator.canShare({ files: [file] })) {
                 await navigator.share({
                     files: [file],
                     title: 'Recibo BJJ College'
                 });
                 shareSuccess = true;
-            } catch (shareError: any) {
-                // Se for AbortError, o usuário só cancelou a tela, não é erro
-                if (shareError.name !== 'AbortError') {
-                    console.warn("Share nativo bloqueado", shareError);
-                } else {
-                    return; 
-                }
             }
-        } 
-
-        // PLANO B / C: Se falhou ou é iPhone
-        if (!shareSuccess) {
-            if (isAppleDevice) {
-                // No iPhone, o download direto falha. Precisamos abrir em nova aba para ele usar o share do Safari
-                const objectUrl = URL.createObjectURL(pdfBlob);
-                const newTab = window.open(objectUrl, '_blank');
-                
-                if (!newTab) {
-                    // Se o popup for bloqueado
-                    addToast('Popup bloqueado. Baixando...', 'warning');
-                    pdf.save(nomeArquivo);
-                } else {
-                    addToast('PDF Aberto! Use o botão do iPhone para compartilhar.', 'success');
-                }
+        } catch (shareError: any) {
+            if (shareError.name !== 'AbortError') {
+                console.warn("Compartilhamento nativo bloqueado", shareError);
             } else {
-                // PC ou Android que não tem Share Nativo
-                pdf.save(nomeArquivo);
-                addToast('Download concluído!', 'success');
+                return; // Usuário abriu o share e fechou
             }
+        }
+
+        // PLANO B: Se não compartilhar (Normal em iPhone Safari), baixa como âncora
+        if (!shareSuccess) {
+            const objectUrl = window.URL.createObjectURL(pdfBlob);
+            const link = document.createElement('a');
+            link.href = objectUrl;
+            link.download = nomeArquivo;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            setTimeout(() => window.URL.revokeObjectURL(objectUrl), 2000);
+            addToast('Download iniciado! Verifique seus arquivos.', 'success');
         }
 
     } catch (error) {
@@ -469,7 +385,6 @@ export default function Alunos() {
     setViewState('form');
   }
 
-  // --- VIEW: DETALHES ---
   if (viewState === 'details' && selectedAluno) {
     const a = selectedAluno;
     return (
@@ -641,7 +556,6 @@ export default function Alunos() {
     );
   }
 
-  // --- VIEW: FORMULÁRIO ---
   if (viewState === 'form') {
       return (
           <div className="bg-slate-50 min-h-screen p-2 md:p-6 animate-fadeIn">
@@ -799,7 +713,6 @@ export default function Alunos() {
       );
   }
 
-  // --- VIEW: LISTAGEM ---
   return (
     <div className="space-y-6 animate-fadeIn pb-20">
       <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
@@ -877,7 +790,6 @@ export default function Alunos() {
       {/* MODAL PAGAMENTO */}
       {pagamentoModal.show && (() => {
           const valorTotalCalculado = Math.max(0, pagamentoModal.valorBase - pagamentoModal.desconto);
-          
           return (
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
               <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-md shadow-2xl animate-fadeIn border">
@@ -919,11 +831,7 @@ export default function Alunos() {
                               <select className="flex-1 bg-slate-50 border-none rounded-2xl p-4 font-bold text-sm" value={p.metodo} onChange={e=> { 
                                   const n = [...pagamentosParciais]; 
                                   n[idx].metodo = e.target.value; 
-                                  if (e.target.value === 'Cartao') {
-                                      n[idx].tipo = 'Crédito'; 
-                                  } else {
-                                      delete n[idx].tipo;
-                                  }
+                                  if (e.target.value === 'Cartao') n[idx].tipo = 'Crédito'; else delete n[idx].tipo;
                                   setPagamentosParciais(n); 
                               }}>
                                   <option>Dinheiro</option><option>Pix</option><option value="Cartao">Cartão</option>
@@ -975,7 +883,7 @@ export default function Alunos() {
           );
       })()}
 
-      {/* MODAL RECIBO DE PAGAMENTO */}
+      {/* MODAL RECIBO DE PAGAMENTO VISÍVEL NA TELA */}
       {reciboModal?.show && (
           <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 z-[9999] animate-fadeIn">
               <div className="w-full max-w-sm relative">
@@ -1021,7 +929,6 @@ export default function Alunos() {
                       <div className="absolute bottom-0 left-0 w-32 h-32 bg-slate-50 rounded-full blur-3xl -z-0 opacity-50 -translate-x-10 translate-y-10"></div>
                   </div>
 
-                  {/* AQUI ESTÁ O BOTÃO COM APENAS O TEXTO "COMPARTILHAR" */}
                   <div className="flex mt-4">
                       <button 
                           onClick={gerarECompartilharPDF} 
@@ -1029,6 +936,78 @@ export default function Alunos() {
                       >
                           <Share2 size={20}/> Compartilhar
                       </button>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* RECIBO INVISÍVEL (FANTASMA) COM TAMANHO FIXO PARA O PDF NUNCA FICAR FINO */}
+      {reciboModal?.show && (
+          <div style={{ position: 'fixed', top: '-10000px', left: '-10000px', zIndex: -9999, opacity: 0 }}>
+              <div ref={reciboRef} style={{ width: '800px', backgroundColor: '#ffffff', padding: '60px', fontFamily: 'sans-serif' }}>
+                  <div style={{ border: '2px solid #e2e8f0', borderRadius: '24px', padding: '50px', backgroundColor: '#ffffff' }}>
+                      
+                      {/* Logo / Header Fixo */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', borderBottom: '2px dashed #cbd5e1', paddingBottom: '30px', marginBottom: '40px' }}>
+                          <div style={{ width: '80px', height: '80px', backgroundColor: '#0f172a', borderRadius: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '20px' }}>
+                              <CheckCircle color="white" size={40} />
+                          </div>
+                          <h2 style={{ fontSize: '42px', fontWeight: 900, color: '#0f172a', margin: 0, textTransform: 'uppercase', letterSpacing: '-1px' }}>BJJ College</h2>
+                          <p style={{ fontSize: '18px', fontWeight: 'bold', color: '#64748b', margin: '8px 0 0 0', textTransform: 'uppercase', letterSpacing: '3px' }}>Recibo de Pagamento</p>
+                      </div>
+
+                      {/* Dados Fixo */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', marginBottom: '40px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '22px' }}>
+                              <span style={{ color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase' }}>Data:</span>
+                              <span style={{ color: '#0f172a', fontWeight: 'bold' }}>{format(reciboModal.dados.data, 'dd/MM/yyyy HH:mm')}</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '22px' }}>
+                              <span style={{ color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase' }}>Aluno:</span>
+                              <span style={{ color: '#0f172a', fontWeight: 'bold' }}>{reciboModal.dados.aluno}</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '22px' }}>
+                              <span style={{ color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase' }}>Referência:</span>
+                              <span style={{ color: '#0f172a', fontWeight: 'bold' }}>Mensalidade</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '22px' }}>
+                              <span style={{ color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase' }}>Operador:</span>
+                              <span style={{ color: '#0f172a', fontWeight: 'bold' }}>{reciboModal.dados.operador}</span>
+                          </div>
+                      </div>
+
+                      {/* Valores Fixo */}
+                      <div style={{ backgroundColor: '#f8fafc', padding: '30px', borderRadius: '20px', marginBottom: '40px', border: '1px solid #f1f5f9' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '22px', marginBottom: '16px' }}>
+                              <span style={{ color: '#64748b' }}>Valor Base:</span>
+                              <span style={{ color: '#0f172a', fontWeight: 'bold' }}>R$ {reciboModal.dados.valorBase.toFixed(2)}</span>
+                          </div>
+                          {reciboModal.dados.desconto > 0 && (
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '22px', marginBottom: '16px' }}>
+                                  <span style={{ color: '#ef4444' }}>Desconto:</span>
+                                  <span style={{ color: '#dc2626', fontWeight: 'bold' }}>- R$ {reciboModal.dados.desconto.toFixed(2)}</span>
+                              </div>
+                          )}
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '32px', marginTop: '24px', paddingTop: '24px', borderTop: '2px solid #e2e8f0' }}>
+                              <span style={{ color: '#0f172a', fontWeight: 900, textTransform: 'uppercase' }}>Total Pago:</span>
+                              <span style={{ color: '#16a34a', fontWeight: 900 }}>R$ {reciboModal.dados.valorPago.toFixed(2)}</span>
+                          </div>
+                      </div>
+
+                      {/* Métodos Fixo */}
+                      <div style={{ marginBottom: '40px' }}>
+                          <p style={{ fontSize: '18px', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase', marginBottom: '20px' }}>Métodos Utilizados:</p>
+                          {reciboModal.dados.metodos.map((m: any, i: number) => (
+                              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '22px', fontWeight: 'bold', color: '#334155', paddingBottom: '12px' }}>
+                                  <span>{m.metodo === 'Cartao' ? `Cartão (${m.tipo})` : m.metodo}</span>
+                                  <span>R$ {m.valor.toFixed(2)}</span>
+                              </div>
+                          ))}
+                      </div>
+
+                      <div style={{ textAlign: 'center', marginTop: '50px', paddingTop: '40px', borderTop: '2px dashed #e2e8f0' }}>
+                          <p style={{ fontSize: '20px', fontWeight: 'bold', color: '#94a3b8', fontStyle: 'italic', textTransform: 'uppercase', margin: 0 }}>Obrigado por treinar conosco! Oss!</p>
+                      </div>
                   </div>
               </div>
           </div>
