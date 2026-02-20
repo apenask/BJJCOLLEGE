@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { 
   Plus, Edit, Trash2, User, CheckCircle, 
   Brain, DollarSign, X, 
-  HeartPulse, Cake, Phone, ChevronLeft, Trophy, Medal, Zap, AlertTriangle, Droplet, ShoppingBag, Copy, Share2, Download
+  HeartPulse, Cake, Phone, ChevronLeft, Trophy, Medal, Zap, AlertTriangle, Droplet, ShoppingBag, Copy, Share2
 } from 'lucide-react';
 import { startOfMonth, endOfMonth, format } from 'date-fns';
 import { useToast } from '../contexts/ToastContext';
@@ -222,29 +222,25 @@ export default function Alunos() {
     } catch (error) { addToast('Erro ao registrar.', 'error'); }
   }
 
-  // --- NOVA FUNÇÃO DE GERAR E COMPARTILHAR PDF ---
+  // --- FUNÇÃO BLINDADA PARA GERAR PDF (MÓVEL E PC) ---
   async function gerarECompartilharPDF() {
     if (!reciboRef.current || !reciboModal) return;
     
     try {
-        addToast('Gerando PDF, aguarde um momento...', 'info');
+        addToast('Gerando...', 'info');
         
-        // Verifica se é mobile para reduzir o peso do canvas e não dar erro de memória
         const isMobile = window.innerWidth <= 768;
         
+        // Scale 1 no celular para não estourar a memória RAM e travar
         const canvas = await html2canvas(reciboRef.current, { 
-            scale: isMobile ? 1.5 : 2, 
+            scale: isMobile ? 1 : 2, 
             backgroundColor: '#ffffff',
-            useCORS: true
+            useCORS: true,
+            logging: false
         });
 
         const imgData = canvas.toDataURL('image/png');
-
-        const pdf = new jsPDF({
-            orientation: 'portrait',
-            unit: 'mm',
-            format: 'a4'
-        });
+        const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
 
         const imgProps = pdf.getImageProperties(imgData);
         const pdfWidth = pdf.internal.pageSize.getWidth();
@@ -254,49 +250,41 @@ export default function Alunos() {
 
         const nomeAlunoFormatado = reciboModal.dados.aluno.replace(/\s+/g, '_');
         const nomeArquivo = `Recibo_BJJCollege_Mensalidade_${nomeAlunoFormatado}.pdf`;
-
         const pdfBlob = pdf.output('blob');
         
-        // Proteção para celulares que dão erro no 'new File'
-        let file: any;
+        // PLANO A: Tentar usar o compartilhamento nativo do celular (WhatsApp, etc)
         try {
-            file = new File([pdfBlob], nomeArquivo, { type: 'application/pdf' });
-        } catch (e) {
-            file = pdfBlob;
-            file.name = nomeArquivo;
-        }
-
-        // SE TIVER COMPARTILHAMENTO NATIVO (CELULAR)
-        if (navigator.canShare && navigator.canShare({ files: [file] })) {
-            try {
+            const file = new File([pdfBlob], nomeArquivo, { type: 'application/pdf' });
+            if (navigator.canShare && navigator.canShare({ files: [file] })) {
                 await navigator.share({
                     files: [file],
-                    title: 'Recibo Mensalidade BJJ College',
-                    text: `Segue o comprovante de pagamento da mensalidade de ${reciboModal.dados.aluno}. Oss!`,
+                    title: 'Recibo BJJ College'
                 });
-            } catch (shareError: any) {
-                // AbortError é apenas quando o usuário arrasta para baixo e fecha a telinha de compartilhar
-                if (shareError.name !== 'AbortError') {
-                    addToast('Erro ao usar o compartilhar nativo. Tentando abrir navegador...', 'warning');
-                    const pdfUrl = URL.createObjectURL(pdfBlob);
-                    window.open(pdfUrl, '_blank');
-                }
+                return; // Se abriu o menu de compartilhar, encerra aqui.
             }
-        } 
-        // SE ESTIVER NO COMPUTADOR
-        else {
+        } catch (e) {
+            console.log("Compartilhamento nativo falhou ou cancelado", e);
+        }
+
+        // PLANO B: Abrir o PDF direto em uma nova aba do celular/PC
+        try {
             const pdfUrl = URL.createObjectURL(pdfBlob);
             const novaAba = window.open(pdfUrl, '_blank');
-            
-            // Se o navegador (ex: Chrome no PC) bloquear a aba do PDF por conta do AdBlocker
-            if (!novaAba || novaAba.closed || typeof novaAba.closed === 'undefined') {
-                addToast('Pop-up bloqueado. O PDF será baixado...', 'info');
-                pdf.save(nomeArquivo);
+            if (novaAba) {
+                addToast('PDF aberto em nova aba!', 'success');
+                return; // Se abriu a aba, encerra aqui.
             }
+        } catch (e) {
+            console.log("Falha ao abrir nova aba", e);
         }
+
+        // PLANO C: Forçar o download (Ideal para PCs)
+        pdf.save(nomeArquivo);
+        addToast('Download iniciado!', 'success');
+
     } catch (error) {
-        console.error("Erro ao gerar PDF:", error);
-        addToast('Erro ao processar o PDF. Tente novamente.', 'error');
+        console.error("Erro crítico ao gerar PDF:", error);
+        addToast('Erro ao gerar comprovante.', 'error');
     }
   }
 
@@ -836,12 +824,11 @@ export default function Alunos() {
                   <div className="space-y-3 mb-6">
                       {pagamentosParciais.map((p, idx) => (
                           <div key={idx} className="flex gap-2">
-                              {/* SELETOR PRINCIPAL DO MÉTODO */}
                               <select className="flex-1 bg-slate-50 border-none rounded-2xl p-4 font-bold text-sm" value={p.metodo} onChange={e=> { 
                                   const n = [...pagamentosParciais]; 
                                   n[idx].metodo = e.target.value; 
                                   if (e.target.value === 'Cartao') {
-                                      n[idx].tipo = 'Crédito'; // Padrão ao selecionar cartão
+                                      n[idx].tipo = 'Crédito'; 
                                   } else {
                                       delete n[idx].tipo;
                                   }
@@ -850,7 +837,6 @@ export default function Alunos() {
                                   <option>Dinheiro</option><option>Pix</option><option value="Cartao">Cartão</option>
                               </select>
                               
-                              {/* SELETOR DE DÉBITO/CRÉDITO (Aparece só se for Cartão) */}
                               {p.metodo === 'Cartao' && (
                                   <select className="w-28 bg-slate-50 border-none rounded-2xl p-4 font-bold text-sm" value={p.tipo || 'Crédito'} onChange={e=> { 
                                       const n = [...pagamentosParciais]; 
@@ -903,7 +889,6 @@ export default function Alunos() {
               <div className="w-full max-w-sm relative">
                   <button onClick={() => setReciboModal(null)} className="absolute -top-4 -right-4 z-10 p-2 bg-white rounded-full shadow-lg hover:bg-slate-100"><X size={20}/></button>
 
-                  {/* ESTA É A ÁREA QUE O HTML2CANVAS VAI FOTOGRAFAR PARA O PDF */}
                   <div ref={reciboRef} className="bg-white rounded-[2rem] p-8 shadow-2xl relative w-full overflow-hidden">
                       <div className="text-center relative z-10">
                           <div className="w-16 h-16 bg-slate-900 text-white rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
@@ -940,22 +925,17 @@ export default function Alunos() {
                           <p className="text-[10px] font-bold text-slate-400 uppercase italic">Obrigado por treinar conosco!</p>
                       </div>
                       
-                      {/* Elemento visual de fundo para o PDF ficar mais bonito */}
                       <div className="absolute top-0 right-0 w-32 h-32 bg-slate-50 rounded-full blur-3xl -z-0 opacity-50 translate-x-10 -translate-y-10"></div>
                       <div className="absolute bottom-0 left-0 w-32 h-32 bg-slate-50 rounded-full blur-3xl -z-0 opacity-50 -translate-x-10 translate-y-10"></div>
                   </div>
 
-                  {/* BOTÕES DE AÇÃO (Ficam fora do PDF) */}
-                  <div className="flex gap-2 mt-4">
-                      <button onClick={gerarECompartilharPDF} className="flex-[2] bg-green-600 text-white py-4 rounded-2xl font-black uppercase flex items-center justify-center gap-2 hover:bg-green-700 shadow-xl shadow-green-200/50 transition-all">
-                          <Share2 size={20}/> Compartilhar
-                      </button>
-                      <button onClick={() => {
-                          const texto = `🥋 *RECIBO DE PAGAMENTO - BJJ COLLEGE*\n\n📅 Data: ${format(reciboModal.dados.data, 'dd/MM/yyyy HH:mm')}\n👤 Aluno: ${reciboModal.dados.aluno}\n\n💰 *Valor Pago: R$ ${reciboModal.dados.valorPago.toFixed(2)}*\n(${reciboModal.dados.metodos.map((m:any) => m.metodo === 'Cartao' ? `Cartão ${m.tipo}` : m.metodo).join(', ')})\n\nOperador: ${reciboModal.dados.operador}\nObrigado por treinar conosco! Oss!`;
-                          navigator.clipboard.writeText(texto);
-                          addToast('Texto copiado!', 'success');
-                      }} className="flex-1 bg-slate-800 text-white py-4 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-slate-900 transition-all">
-                          <Copy size={20}/> Texto
+                  {/* AQUI ESTÁ O BOTÃO COM APENAS O TEXTO "COMPARTILHAR" */}
+                  <div className="flex mt-4">
+                      <button 
+                          onClick={gerarECompartilharPDF} 
+                          className="w-full bg-green-600 text-white py-4 rounded-2xl font-black uppercase flex items-center justify-center hover:bg-green-700 shadow-xl shadow-green-200/50 transition-all"
+                      >
+                          Compartilhar
                       </button>
                   </div>
               </div>
