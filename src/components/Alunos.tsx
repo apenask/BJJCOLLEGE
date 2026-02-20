@@ -1,18 +1,21 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { 
   Plus, Edit, Trash2, User, CheckCircle, 
   Brain, DollarSign, X, 
-  HeartPulse, Cake, Phone, ChevronLeft, Trophy, Medal, Zap, AlertTriangle, Droplet, ShoppingBag, Copy, QrCode
+  HeartPulse, Cake, Phone, ChevronLeft, Trophy, Medal, Zap, AlertTriangle, Droplet, ShoppingBag, Copy, Share2, Download
 } from 'lucide-react';
-import { startOfMonth, endOfMonth } from 'date-fns';
+import { startOfMonth, endOfMonth, format } from 'date-fns';
 import { useToast } from '../contexts/ToastContext';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 
 interface Aluno {
   id: string;
   nome: string;
   foto_url: string;
   data_nascimento: string;
+  data_matricula?: string;
   graduacao: string;
   categoria: 'Adulto' | 'Infantil' | 'Kids';
   status: string;
@@ -28,13 +31,14 @@ interface Aluno {
   bolsista_musculacao: boolean;
   atleta: boolean;
   pago_mes_atual?: boolean;
-  divida_loja?: number; // CAMPO NOVO
+  divida_loja?: number; 
 }
 
 const DIAS_SEMANA = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
 
 export default function Alunos() {
   const { addToast } = useToast();
+  const reciboRef = useRef<HTMLDivElement>(null); // Ref para capturar o recibo para PDF
   
   const [alunos, setAlunos] = useState<Aluno[]>([]);
   const [loading, setLoading] = useState(true);
@@ -43,7 +47,6 @@ export default function Alunos() {
   const [viewState, setViewState] = useState<'list' | 'form' | 'details'>('list');
   const [searchTerm, setSearchTerm] = useState('');
   
-  // NOVO: Filtro para ver devedores
   const [filtroDevedores, setFiltroDevedores] = useState(false);
 
   const [formData, setFormData] = useState<Partial<Aluno>>({ 
@@ -51,18 +54,20 @@ export default function Alunos() {
     plano_tipo: 'Todos os dias',
     categoria: 'Adulto',
     graduacao: '', 
-    status: 'Ativo'
+    status: 'Ativo',
+    data_matricula: new Date().toISOString().split('T')[0]
   });
   
   const [selectedAluno, setSelectedAluno] = useState<Aluno | null>(null);
   const [editMode, setEditMode] = useState(false);
 
-  // Estados dos Modais
   const [customAlert, setCustomAlert] = useState({ show: false, id: '', nome: '' });
   const [forceDeleteAlert, setForceDeleteAlert] = useState({ show: false, id: '', nome: '' }); 
   
-  const [pagamentoModal, setPagamentoModal] = useState<{ show: boolean, aluno: Aluno | null, valorTotal: number }>({ show: false, aluno: null, valorTotal: 0 });
-  const [pagamentosParciais, setPagamentosParciais] = useState<{ metodo: string, valor: number }[]>([]);
+  const [pagamentoModal, setPagamentoModal] = useState<{ show: boolean, aluno: Aluno | null, valorBase: number, desconto: number }>({ show: false, aluno: null, valorBase: 0, desconto: 0 });
+  const [pagamentosParciais, setPagamentosParciais] = useState<{ metodo: string, valor: number, tipo?: string }[]>([]);
+
+  const [reciboModal, setReciboModal] = useState<{ show: boolean, dados: any } | null>(null);
 
   useEffect(() => { fetchAlunos(); }, []);
 
@@ -73,7 +78,6 @@ export default function Alunos() {
       const inicioMes = startOfMonth(new Date()).toISOString();
       const fimMes = endOfMonth(new Date()).toISOString();
 
-      // 1. Verifica Mensalidades Pagas
       const { data: pagamentos } = await supabase
         .from('transacoes')
         .select('aluno_id')
@@ -84,13 +88,11 @@ export default function Alunos() {
 
       const pagantesSet = new Set(pagamentos?.map(p => p.aluno_id));
       
-      // 2. Verifica Dívidas da Loja (Transações 'Pendente' da categoria Loja)
       const { data: dividas } = await supabase.from('transacoes')
          .select('aluno_id, valor')
          .eq('tipo', 'Pendente')
          .eq('categoria', 'Venda Loja');
 
-      // Cria um mapa de ID -> Valor Total Dívida
       const dividaMap = new Map();
       dividas?.forEach(d => {
           const atual = dividaMap.get(d.aluno_id) || 0;
@@ -99,7 +101,7 @@ export default function Alunos() {
       
       const alunosProc = dadosAlunos?.map((aluno: any) => ({
         ...aluno,
-        pago_mes_atual: pagantesSet.has(aluno.id) || aluno.bolsista_jiujitsu || aluno.bolsista_musculacao,
+        pago_mes_atual: pagantesSet.has(aluno.id) || aluno.bolsista_jiujitsu,
         divida_loja: dividaMap.get(aluno.id) || 0
       }));
       setAlunos(alunosProc || []);
@@ -113,9 +115,11 @@ export default function Alunos() {
 
   function adicionarMetodo() {
      const novoTamanho = pagamentosParciais.length + 1;
-     const valorIgual = Number((pagamentoModal.valorTotal / novoTamanho).toFixed(2));
+     const valorTotalCalculado = Math.max(0, pagamentoModal.valorBase - pagamentoModal.desconto);
+     const valorIgual = Number((valorTotalCalculado / novoTamanho).toFixed(2));
      const novos = Array(novoTamanho).fill(null).map((_, i) => ({
          metodo: pagamentosParciais[i]?.metodo || 'Pix',
+         tipo: pagamentosParciais[i]?.tipo,
          valor: valorIgual
      }));
      setPagamentosParciais(novos);
@@ -144,50 +148,141 @@ export default function Alunos() {
       return hoje.getDate() === dia && hoje.getMonth() === (mes - 1);
   }
 
+  function calcularTempoTreino(dataStr?: string) {
+      if (!dataStr) return 'Não registrada';
+      const [ano, mes, dia] = dataStr.split('-').map(Number);
+      if (!ano || !mes || !dia) return 'Data inválida';
+      const inicio = new Date(ano, mes - 1, dia);
+      const hoje = new Date();
+      let meses = (hoje.getFullYear() - inicio.getFullYear()) * 12 + (hoje.getMonth() - inicio.getMonth());
+      if (hoje.getDate() < inicio.getDate()) meses--;
+      if (meses < 0) return 'Começa no futuro';
+      if (meses === 0) return 'Menos de 1 mês';
+      const anosCalc = Math.floor(meses / 12);
+      const mesesRestantes = meses % 12;
+      let res = [];
+      if (anosCalc > 0) res.push(`${anosCalc} ano${anosCalc > 1 ? 's' : ''}`);
+      if (mesesRestantes > 0) res.push(`${mesesRestantes} mês${mesesRestantes > 1 ? 'es' : ''}`);
+      return res.join(' e ');
+  }
+
   function abrirModalPagamento(aluno: Aluno) {
     let valor = 80.00;
     if (aluno.plano_tipo === '3 Dias') valor = 70.00;
     if (aluno.plano_tipo === '2 Dias') valor = 60.00;
-    setPagamentoModal({ show: true, aluno, valorTotal: valor });
+    setPagamentoModal({ show: true, aluno, valorBase: valor, desconto: 0 });
     setPagamentosParciais([{ metodo: 'Dinheiro', valor: valor }]); 
   }
 
   async function confirmarPagamento() {
     if (!pagamentoModal.aluno) return;
+
+    const valorTotalCalculado = Math.max(0, pagamentoModal.valorBase - pagamentoModal.desconto);
     const soma = pagamentosParciais.reduce((acc, p) => acc + p.valor, 0);
-    if (Math.abs(soma - pagamentoModal.valorTotal) > 0.5) { 
-        addToast(`A soma deve ser R$ ${pagamentoModal.valorTotal}`, 'warning'); 
+
+    if (Math.abs(soma - valorTotalCalculado) > 0.5) { 
+        addToast(`A soma deve ser R$ ${valorTotalCalculado.toFixed(2)}`, 'warning'); 
         return; 
     }
+
     try {
+      const { data: authData } = await supabase.auth.getUser();
+      const operadorNome = authData?.user?.user_metadata?.nome || authData?.user?.email?.split('@')[0] || 'Operador Local';
+
       await supabase.from('transacoes').insert([{
         descricao: `Mensalidade - ${pagamentoModal.aluno.nome}`,
-        valor: pagamentoModal.valorTotal,
+        valor: valorTotalCalculado,
         tipo: 'Receita',
         categoria: 'Mensalidade',
         data: new Date().toISOString(),
         aluno_id: pagamentoModal.aluno.id,
-        detalhes_pagamento: { metodos: pagamentosParciais }
+        detalhes_pagamento: { 
+            metodos: pagamentosParciais,
+            desconto_aplicado: pagamentoModal.desconto,
+            operador: operadorNome
+        }
       }]);
+
       addToast(`Pagamento confirmado!`, 'success'); 
-      setPagamentoModal({ show: false, aluno: null, valorTotal: 0 }); 
+
+      const dadosRecibo = {
+          aluno: pagamentoModal.aluno.nome,
+          data: new Date(),
+          valorBase: pagamentoModal.valorBase,
+          desconto: pagamentoModal.desconto,
+          valorPago: valorTotalCalculado,
+          metodos: pagamentosParciais,
+          operador: operadorNome
+      };
+
+      setPagamentoModal({ show: false, aluno: null, valorBase: 0, desconto: 0 }); 
+      setReciboModal({ show: true, dados: dadosRecibo });
+      
       fetchAlunos();
     } catch (error) { addToast('Erro ao registrar.', 'error'); }
   }
 
+  // --- FUNÇÃO PARA GERAR E COMPARTILHAR PDF ---
+  async function gerarECompartilharPDF() {
+    if (!reciboRef.current || !reciboModal) return;
+    
+    try {
+        addToast('Gerando PDF...', 'info');
+        
+        // 1. Tira uma foto da div do recibo (escondendo os botões que ficam de fora da ref)
+        const canvas = await html2canvas(reciboRef.current, { scale: 2, backgroundColor: '#ffffff' });
+        const imgData = canvas.toDataURL('image/png');
+
+        // 2. Cria o arquivo PDF
+        const pdf = new jsPDF({
+            orientation: 'portrait',
+            unit: 'mm',
+            format: 'a4'
+        });
+
+        const imgProps = pdf.getImageProperties(imgData);
+        const pdfWidth = pdf.internal.pageSize.getWidth();
+        const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+
+        pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+
+        // 3. Define o nome do arquivo padrão que você pediu
+        const nomeAlunoFormatado = reciboModal.dados.aluno.replace(/\s+/g, '_');
+        const nomeArquivo = `Recibo_BJJCollege_Mensalidade_${nomeAlunoFormatado}.pdf`;
+
+        // 4. Prepara o PDF para compartilhamento
+        const pdfBlob = pdf.output('blob');
+        const file = new File([pdfBlob], nomeArquivo, { type: 'application/pdf' });
+
+        // Verifica se o dispositivo suporta compartilhamento de arquivos (Ex: Celulares)
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            await navigator.share({
+                files: [file],
+                title: 'Recibo Mensalidade BJJ College',
+                text: `Segue o comprovante de pagamento da mensalidade de ${reciboModal.dados.aluno}. Oss!`,
+            });
+            addToast('Compartilhamento aberto com sucesso!', 'success');
+        } else {
+            // Fallback: Se estiver no PC ou navegador que não suporta share, ele faz o download
+            pdf.save(nomeArquivo);
+            addToast('PDF baixado! Você pode anexar direto no WhatsApp Web.', 'success');
+        }
+    } catch (error) {
+        console.error("Erro ao gerar PDF:", error);
+        addToast('Erro ao processar o PDF.', 'error');
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
       e.preventDefault();
-      
-      // VALIDAÇÃO OBRIGATÓRIA
       if (!formData.nome || !formData.graduacao || !formData.categoria || !formData.data_nascimento) {
           addToast('Preencha os campos obrigatórios (*)', 'warning');
           return;
       }
-
       try {
         const alunoData = { ...formData };
         delete (alunoData as any).pago_mes_atual; 
-        delete (alunoData as any).divida_loja; // Não salva campo calculado
+        delete (alunoData as any).divida_loja; 
 
         if (!alunoData.plano_tipo) alunoData.plano_tipo = 'Todos os dias';
         if (!alunoData.status) alunoData.status = 'Ativo';
@@ -198,18 +293,12 @@ export default function Alunos() {
         addToast('Aluno salvo com sucesso!', 'success'); 
         setViewState('list'); 
         fetchAlunos();
-      } catch (e:any) { 
-        console.error(e);
-        addToast(`Erro ao salvar: ${e.message}`, 'error'); 
-      }
+      } catch (e:any) { addToast(`Erro ao salvar: ${e.message}`, 'error'); }
   }
 
-  // --- FUNÇÃO DE EXCLUSÃO NORMAL ---
   async function executarExclusao() {
     const { error } = await supabase.from('alunos').delete().eq('id', customAlert.id);
-    
     if (error) {
-        console.error(error);
         if (error.code === '23503' || error.message.includes('foreign key')) {
             setCustomAlert({ show: false, id: '', nome: '' }); 
             setForceDeleteAlert({ show: true, id: customAlert.id, nome: customAlert.nome }); 
@@ -227,7 +316,6 @@ export default function Alunos() {
     }
   }
 
-  // --- FUNÇÃO: FORÇAR EXCLUSÃO ---
   async function executarExclusaoForcada() {
       try {
           const id = forceDeleteAlert.id;
@@ -236,7 +324,6 @@ export default function Alunos() {
           const { error } = await supabase.from('alunos').delete().eq('id', id);
 
           if (error) throw error;
-
           addToast('Aluno e histórico removidos à força!', 'success');
           setForceDeleteAlert({ show: false, id: '', nome: '' });
           if (selectedAluno?.id === id) {
@@ -244,11 +331,7 @@ export default function Alunos() {
             setSelectedAluno(null);
           }
           fetchAlunos();
-
-      } catch (error) {
-          console.error(error);
-          addToast('Erro crítico ao forçar exclusão.', 'error');
-      }
+      } catch (error) { addToast('Erro crítico ao forçar exclusão.', 'error'); }
   }
 
   const toggleDia = (dia: string) => {
@@ -261,9 +344,10 @@ export default function Alunos() {
     const matchCategoria = (aluno.categoria === tabAtual || (!aluno.categoria && tabAtual === 'Adulto'));
     const matchBusca = aluno.nome.toLowerCase().includes(searchTerm.toLowerCase());
     
-    // FILTRO DE INADIMPLENTES (Mensalidade Atrasada OU Dívida na Loja)
     if (filtroDevedores) {
-        return matchBusca && (!aluno.pago_mes_atual || (aluno.divida_loja || 0) > 0);
+        const deveMensalidade = !aluno.pago_mes_atual && aluno.status === 'Ativo';
+        const deveLoja = (aluno.divida_loja || 0) > 0;
+        return matchBusca && (deveMensalidade || deveLoja);
     }
     
     return matchCategoria && matchBusca;
@@ -271,11 +355,8 @@ export default function Alunos() {
 
   function handleNovoAluno() {
     setFormData({
-        categoria: tabAtual, 
-        plano_tipo: 'Todos os dias', 
-        plano_dias: [],
-        graduacao: '', 
-        status: 'Ativo'
+        categoria: tabAtual, plano_tipo: 'Todos os dias', plano_dias: [],
+        graduacao: '', status: 'Ativo', data_matricula: new Date().toISOString().split('T')[0]
     }); 
     setEditMode(false); 
     setViewState('form');
@@ -297,7 +378,6 @@ export default function Alunos() {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                {/* Lateral Esquerda */}
                 <div className="lg:col-span-4 space-y-6">
                     <div className="bg-white rounded-[2.5rem] p-8 shadow-xl shadow-slate-200/50 border border-white flex flex-col items-center text-center relative overflow-hidden">
                         <div className={`absolute top-0 inset-x-0 h-3 ${a.status === 'Ativo' ? 'bg-green-500' : 'bg-slate-300'}`}></div>
@@ -315,12 +395,17 @@ export default function Alunos() {
                         <div className="flex items-center gap-2 mb-6">
                             <span className="bg-slate-900 text-white text-[10px] font-black px-3 py-1 rounded-full uppercase">{a.graduacao}</span>
                             <span className="bg-blue-100 text-blue-700 text-[10px] font-black px-3 py-1 rounded-full uppercase">{a.categoria}</span>
+                            {a.status === 'Inativo' && <span className="bg-red-100 text-red-600 text-[10px] font-black px-3 py-1 rounded-full uppercase">INATIVO</span>}
                         </div>
 
                         <div className="w-full p-4 rounded-3xl border border-slate-100 bg-slate-50 mb-4 text-left">
                             <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Situação Financeira</p>
                             <div className="flex flex-col gap-3">
-                                {a.pago_mes_atual ? (
+                                {a.status === 'Inativo' ? (
+                                    <div className="flex items-center gap-2 text-slate-400 font-black uppercase text-sm">
+                                        <X size={20}/> Mensalidade Suspensa
+                                    </div>
+                                ) : a.pago_mes_atual ? (
                                     <div className="flex items-center gap-2 text-green-600 font-black uppercase text-sm">
                                         <CheckCircle size={20}/> Mensalidade em Dia
                                     </div>
@@ -338,7 +423,6 @@ export default function Alunos() {
                                     </div>
                                 )}
 
-                                {/* CARD VERMELHO DE DÍVIDA NA LOJA (NOVO) */}
                                 {(a.divida_loja || 0) > 0 && (
                                     <div className="bg-red-50 border border-red-100 p-4 rounded-2xl flex items-center justify-between animate-pulse">
                                         <div className="flex items-center gap-3 text-red-600">
@@ -362,12 +446,16 @@ export default function Alunos() {
                     <div className="bg-white rounded-[2.5rem] p-6 shadow-lg border border-white flex items-center justify-between">
                         <div className="flex items-center gap-3">
                             <div className="p-3 bg-blue-50 text-blue-600 rounded-2xl"><Phone size={20}/></div>
-                            <div><p className="text-[10px] font-black text-slate-400 uppercase">WhatsApp</p><p className="font-bold text-slate-800">{a.whatsapp || 'Não cadastrado'}</p></div>
+                            <div>
+                                <p className="text-[10px] font-black text-slate-400 uppercase">
+                                    {(a.categoria === 'Kids' || a.categoria === 'Infantil') ? 'WhatsApp do Responsável' : 'WhatsApp'}
+                                </p>
+                                <p className="font-bold text-slate-800">{a.whatsapp || 'Não cadastrado'}</p>
+                            </div>
                         </div>
                     </div>
                 </div>
 
-                {/* Área Principal */}
                 <div className="lg:col-span-8 space-y-6">
                     <div className="bg-white rounded-[2.5rem] p-8 shadow-xl border border-white">
                         <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight mb-6 flex items-center gap-2">
@@ -383,15 +471,22 @@ export default function Alunos() {
                                     <span className="text-slate-400 font-bold uppercase text-xs">Dias de Treino</span>
                                     <span className="font-black text-blue-600 text-xs uppercase">{a.plano_dias?.join(' • ') || 'A Definir'}</span>
                                 </div>
+                                <div className="flex justify-between border-b border-slate-50 pb-2 mt-4">
+                                    <span className="text-slate-400 font-bold uppercase text-xs">Tempo de Treino</span>
+                                    <span className="font-black text-slate-800 text-xs text-right">
+                                        {a.data_matricula ? format(new Date(a.data_matricula), 'dd/MM/yyyy') : 'N/A'}<br/>
+                                        <span className="text-[10px] text-blue-600 italic uppercase">{calcularTempoTreino(a.data_matricula)}</span>
+                                    </span>
+                                </div>
                             </div>
                             <div className="space-y-4">
                                 <div className="flex justify-between border-b border-slate-50 pb-2">
                                     <span className="text-slate-400 font-bold uppercase text-xs">Jiu-Jitsu Bolsista</span>
-                                    <span className={`font-black uppercase text-xs ${a.bolsista_jiujitsu ? 'text-green-600' : 'text-slate-300'}`}>{a.bolsista_jiujitsu ? 'Ativo' : 'Não'}</span>
+                                    <span className={`font-black uppercase text-xs ${a.bolsista_jiujitsu ? 'text-green-600' : 'text-slate-300'}`}>{a.bolsista_jiujitsu ? 'Ativo (Isento)' : 'Não'}</span>
                                 </div>
                                 <div className="flex justify-between border-b border-slate-50 pb-2">
                                     <span className="text-slate-400 font-bold uppercase text-xs">Musculação Bolsista</span>
-                                    <span className={`font-black uppercase text-xs ${a.bolsista_musculacao ? 'text-green-600' : 'text-slate-300'}`}>{a.bolsista_musculacao ? 'Ativo' : 'Não'}</span>
+                                    <span className={`font-black uppercase text-xs ${a.bolsista_musculacao ? 'text-green-600' : 'text-slate-300'}`}>{a.bolsista_musculacao ? 'Ativo (Paga Normal)' : 'Não'}</span>
                                 </div>
                             </div>
                         </div>
@@ -404,7 +499,7 @@ export default function Alunos() {
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
                             <div className="space-y-6">
                                 <div className="flex items-center gap-4">
-                                    <div className="p-4 bg-red-100 text-red-600 rounded-3xl"><Droplet size={24}/></div> {/* ÍCONE CORRIGIDO AQUI */}
+                                    <div className="p-4 bg-red-100 text-red-600 rounded-3xl"><Droplet size={24}/></div>
                                     <div>
                                         <p className="text-[10px] font-black text-slate-400 uppercase">Tipo Sanguíneo</p>
                                         <p className="text-2xl font-black text-red-600 italic">{a.tipo_sanguineo || 'N/A'}</p>
@@ -425,7 +520,7 @@ export default function Alunos() {
                                     </div>
                                 </div>
                                 <div>
-                                    <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Observações Especiais</p>
+                                    <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Observações Especiais / Responsáveis</p>
                                     <div className="bg-white p-4 rounded-3xl border border-slate-100 text-sm text-slate-600 shadow-inner">
                                         {a.detalhes_condicao || 'Sem observações adicionais.'}
                                     </div>
@@ -475,19 +570,69 @@ export default function Alunos() {
                                   <input type="date" className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-medium text-slate-600 focus:ring-2 focus:ring-blue-500" value={formData.data_nascimento || ''} onChange={e=>setFormData({...formData, data_nascimento: e.target.value})} />
                               </div>
                               <div>
-                                  <label className="text-xs font-bold text-slate-400 uppercase ml-1">WhatsApp</label>
-                                  <input className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-medium focus:ring-2 focus:ring-blue-500" value={formData.whatsapp || ''} onChange={e=>setFormData({...formData, whatsapp: e.target.value})} placeholder="(00) 00000-0000" />
+                                  <label className="text-xs font-bold text-slate-400 uppercase ml-1">Data de Matrícula</label>
+                                  <input type="date" className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-medium text-slate-600 focus:ring-2 focus:ring-blue-500" value={formData.data_matricula || ''} onChange={e=>setFormData({...formData, data_matricula: e.target.value})} />
                               </div>
+                              
                               <div>
                                   <label className="text-xs font-bold text-slate-400 uppercase ml-1">Turma <span className="text-red-500">*</span></label>
-                                  <select className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-bold text-blue-600" value={formData.categoria} onChange={e=>setFormData({...formData, categoria: e.target.value as any})}><option value="Adulto">🥋 Adulto</option><option value="Infantil">👦 Infantil</option><option value="Kids">👶 Kids</option></select>
+                                  <select 
+                                      className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-bold text-blue-600" 
+                                      value={formData.categoria} 
+                                      onChange={e => {
+                                          const novaCategoria = e.target.value as any;
+                                          let novoPlano = formData.plano_tipo || 'Todos os dias';
+                                          let novosDias = formData.plano_dias || [];
+
+                                          if (novaCategoria === 'Kids') {
+                                              novoPlano = '2 Dias';
+                                              novosDias = ['Terça', 'Quinta'];
+                                          } else if (novaCategoria === 'Infantil') {
+                                              novoPlano = '3 Dias';
+                                              novosDias = ['Segunda', 'Quarta', 'Sexta'];
+                                          } else if (novaCategoria === 'Adulto') {
+                                              novoPlano = 'Todos os dias';
+                                              novosDias = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
+                                          }
+
+                                          setFormData({
+                                              ...formData, 
+                                              categoria: novaCategoria,
+                                              plano_tipo: novoPlano,
+                                              plano_dias: novosDias
+                                          });
+                                      }}
+                                  >
+                                      <option value="Adulto">🥋 Adulto</option>
+                                      <option value="Infantil">👦 Infantil</option>
+                                      <option value="Kids">👶 Kids</option>
+                                  </select>
                               </div>
+
                               <div>
                                 <label className="text-xs font-bold text-slate-400 uppercase ml-1">Graduação <span className="text-red-500">*</span></label>
                                 <select className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-medium focus:ring-2 focus:ring-blue-500" value={formData.graduacao || ''} onChange={e=>setFormData({...formData, graduacao: e.target.value})}>
                                     <option value="">Selecione...</option>
                                     <option>Branca</option><option>Cinza</option><option>Amarela</option><option>Laranja</option><option>Verde</option><option>Azul</option><option>Roxa</option><option>Marrom</option><option>Preta</option>
                                 </select>
+                              </div>
+
+                              <div>
+                                  <label className="text-xs font-bold text-slate-400 uppercase ml-1 flex items-center gap-1">
+                                      {formData.categoria === 'Kids' || formData.categoria === 'Infantil' ? 'WhatsApp (Resp. Financeiro)' : 'WhatsApp'}
+                                  </label>
+                                  <input className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-medium focus:ring-2 focus:ring-blue-500" value={formData.whatsapp || ''} onChange={e=>setFormData({...formData, whatsapp: e.target.value})} placeholder="(00) 00000-0000" />
+                                  {(formData.categoria === 'Kids' || formData.categoria === 'Infantil') && (
+                                      <p className="text-[10px] text-slate-500 mt-1 ml-1 leading-tight">Para outros responsáveis, anote nas observações.</p>
+                                  )}
+                              </div>
+
+                              <div>
+                                  <label className="text-xs font-bold text-slate-400 uppercase ml-1">Status do Aluno</label>
+                                  <select className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-bold text-slate-700" value={formData.status || 'Ativo'} onChange={e=>setFormData({...formData, status: e.target.value})}>
+                                      <option value="Ativo">🟢 Ativo (Treinando)</option>
+                                      <option value="Inativo">🔴 Inativo (Parou)</option>
+                                  </select>
                               </div>
                           </div>
                       </div>
@@ -504,7 +649,7 @@ export default function Alunos() {
                               </div>
                               <div className="space-y-6">
                                   <div><label className="text-xs font-bold text-slate-400 uppercase">Alergias e Remédios</label><textarea className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 h-24 focus:ring-2 focus:ring-red-400" value={formData.alergias || ''} onChange={e=>setFormData({...formData, alergias: e.target.value})} /></div>
-                                  <div><label className="text-xs font-bold text-slate-400 uppercase">Observações</label><textarea className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 h-24" value={formData.detalhes_condicao || ''} onChange={e=>setFormData({...formData, detalhes_condicao: e.target.value})} /></div>
+                                  <div><label className="text-xs font-bold text-slate-400 uppercase">Observações (Outros Responsáveis)</label><textarea className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 h-24" value={formData.detalhes_condicao || ''} onChange={e=>setFormData({...formData, detalhes_condicao: e.target.value})} /></div>
                               </div>
                           </div>
                       </div>
@@ -515,9 +660,9 @@ export default function Alunos() {
                               <div className="space-y-4">
                                   <label className="text-xs font-bold text-slate-400 uppercase">Plano Escolhido</label>
                                   <select className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-bold text-slate-700" value={formData.plano_tipo || 'Todos os dias'} onChange={e=>setFormData({...formData, plano_tipo: e.target.value})}>
-                                      <option value="Todos os dias">Todos os dias</option>
-                                      <option value="3 Dias">3 Dias na semana</option>
-                                      <option value="2 Dias">2 Dias na semana</option>
+                                      <option value="Todos os dias">Todos os dias (R$ 80)</option>
+                                      <option value="3 Dias">3 Dias na semana (R$ 70)</option>
+                                      <option value="2 Dias">2 Dias na semana (R$ 60)</option>
                                   </select>
                                   {formData.plano_tipo !== 'Todos os dias' && (
                                       <div className="mt-4 animate-fadeIn">
@@ -530,8 +675,8 @@ export default function Alunos() {
                                   )}
                               </div>
                               <div className="grid grid-cols-1 gap-3">
-                                  <label className="flex items-center gap-4 p-4 rounded-2xl border bg-slate-50 cursor-pointer"><input type="checkbox" checked={formData.bolsista_jiujitsu || false} onChange={e=>setFormData({...formData, bolsista_jiujitsu: e.target.checked})} /><span className="font-bold">Bolsista Jiu-Jitsu</span></label>
-                                  <label className="flex items-center gap-4 p-4 rounded-2xl border bg-slate-50 cursor-pointer"><input type="checkbox" checked={formData.bolsista_musculacao || false} onChange={e=>setFormData({...formData, bolsista_musculacao: e.target.checked})} /><span className="font-bold">Bolsista Musculação</span></label>
+                                  <label className="flex items-center gap-4 p-4 rounded-2xl border bg-slate-50 cursor-pointer"><input type="checkbox" checked={formData.bolsista_jiujitsu || false} onChange={e=>setFormData({...formData, bolsista_jiujitsu: e.target.checked})} /><span className="font-bold">Bolsista Jiu-Jitsu (Isento)</span></label>
+                                  <label className="flex items-center gap-4 p-4 rounded-2xl border bg-slate-50 cursor-pointer"><input type="checkbox" checked={formData.bolsista_musculacao || false} onChange={e=>setFormData({...formData, bolsista_musculacao: e.target.checked})} /><span className="font-bold">Bolsista Musculação (Paga Normal)</span></label>
                                   <label className="flex items-center gap-4 p-4 rounded-2xl border bg-slate-50 cursor-pointer"><input type="checkbox" checked={formData.atleta || false} onChange={e=>setFormData({...formData, atleta: e.target.checked})} /><span className="font-bold">Aluno Atleta</span></label>
                               </div>
                           </div>
@@ -555,7 +700,6 @@ export default function Alunos() {
           <button onClick={handleNovoAluno} className="bg-slate-900 text-white px-6 py-3 rounded-2xl flex items-center gap-2 hover:bg-black shadow-lg transition-all font-bold text-sm w-full sm:w-auto justify-center"><Plus size={20}/> NOVO ALUNO</button>
       </div>
       
-      {/* ABAS DE CATEGORIA + BOTÃO DE FILTRO DE DEVEDORES */}
       <div className="flex gap-2 flex-wrap">
           <div className="flex bg-slate-200 p-1 rounded-2xl gap-1 overflow-x-auto flex-1">
               {['Adulto', 'Infantil', 'Kids'].map(c => (<button key={c} onClick={()=>{setTabAtual(c as any); setFiltroDevedores(false);}} className={`flex-1 px-6 py-3 rounded-xl font-bold text-sm transition-all ${tabAtual===c && !filtroDevedores ? 'bg-white text-blue-600 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>{c}</button>))}
@@ -583,24 +727,27 @@ export default function Alunos() {
                               <div>
                                   <div className="font-bold text-slate-800 flex items-center gap-2 group-hover:text-blue-600">
                                       {aluno.nome}
+                                      {aluno.status === 'Inativo' && <span className="bg-red-100 text-red-600 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">Inativo</span>}
                                       {isAniversariante(aluno.data_nascimento) && (
                                         <span className="bg-pink-100 text-pink-700 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 uppercase italic">
-                                          Aniversariante <Cake size={14} className="animate-bounce" />
+                                          Aniv. <Cake size={14} className="animate-bounce" />
                                         </span>
                                       )}
                                       {aluno.atleta && <span className="w-2 h-2 rounded-full bg-blue-500" title="Atleta"></span>}
                                   </div>
                                   <div className="flex gap-2 mt-1">
                                       <span className="text-[10px] font-black uppercase text-slate-400 bg-slate-100 px-2 py-0.5 rounded">{aluno.graduacao}</span>
-                                      {(aluno.bolsista_jiujitsu || aluno.bolsista_musculacao) && <span className="text-[10px] font-black uppercase bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded">Bolsista</span>}
+                                      {aluno.bolsista_jiujitsu && <span className="text-[10px] font-black uppercase bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded">Bols. Isento</span>}
                                       {(aluno.divida_loja || 0) > 0 && <span className="text-[10px] font-black uppercase bg-red-100 text-red-600 px-2 py-0.5 rounded">Deve Loja</span>}
                                   </div>
                               </div>
                           </div>
                       </td>
                       <td className="p-4 text-center">
-                          {aluno.pago_mes_atual ? (
-                              <div className="bg-green-50 text-green-600 px-4 py-2 rounded-xl text-xs font-bold inline-flex items-center gap-2 border border-green-100"><CheckCircle size={14}/> {aluno.bolsista_jiujitsu || aluno.bolsista_musculacao ? 'ISENTO' : 'PAGO'}</div>
+                          {aluno.status === 'Inativo' ? (
+                              <div className="text-xs font-bold text-slate-400 border border-slate-200 px-4 py-2 rounded-xl inline-flex">-</div>
+                          ) : aluno.pago_mes_atual ? (
+                              <div className="bg-green-50 text-green-600 px-4 py-2 rounded-xl text-xs font-bold inline-flex items-center gap-2 border border-green-100"><CheckCircle size={14}/> {aluno.bolsista_jiujitsu ? 'ISENTO' : 'PAGO'}</div>
                           ) : (
                               <div className="flex items-center justify-center gap-3">
                                   <span className="text-[10px] font-black text-red-400 uppercase tracking-tighter">Pendente</span>
@@ -621,61 +768,174 @@ export default function Alunos() {
       </div>
 
       {/* MODAL PAGAMENTO */}
-      {pagamentoModal.show && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-md shadow-2xl animate-fadeIn border">
-                <div className="flex justify-between mb-6 italic font-black uppercase"><h3>Receber Pagamento</h3><button onClick={()=>setPagamentoModal({show:false, aluno:null, valorTotal:0})}><X size={24}/></button></div>
-                <div className="bg-slate-50 rounded-3xl p-6 text-center mb-6 border border-slate-100"><p className="text-xs font-bold text-slate-400 uppercase mb-1">Total</p><p className="text-4xl font-black text-slate-900 italic">R$ {pagamentoModal.valorTotal.toFixed(2)}</p></div>
-                
-                <div className="space-y-3 mb-6">
-                    {pagamentosParciais.map((p, idx) => (
-                        <div key={idx} className="flex gap-2">
-                            <select className="flex-1 bg-slate-50 border-none rounded-2xl p-4 font-bold text-sm" value={p.metodo} onChange={e=> { const n = [...pagamentosParciais]; n[idx].metodo = e.target.value; setPagamentosParciais(n); }}>
-                                <option>Dinheiro</option><option>Pix</option><option>Cartao</option>
-                            </select>
-                            <input type="number" className="w-32 bg-slate-50 border-none rounded-2xl p-4 font-black text-slate-900" value={p.valor} onChange={e=> { const n = [...pagamentosParciais]; n[idx].valor = parseFloat(e.target.value) || 0; setPagamentosParciais(n); }} />
-                        </div>
-                    ))}
-                    <button onClick={adicionarMetodo} className="text-xs font-bold text-blue-600 uppercase tracking-widest hover:underline">+ Adicionar e dividir</button>
-                </div>
+      {pagamentoModal.show && (() => {
+          const valorTotalCalculado = Math.max(0, pagamentoModal.valorBase - pagamentoModal.desconto);
+          
+          return (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+              <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-md shadow-2xl animate-fadeIn border">
+                  <div className="flex justify-between mb-6 italic font-black uppercase"><h3>Receber Pagamento</h3><button onClick={()=>setPagamentoModal({show:false, aluno:null, valorBase:0, desconto:0})}><X size={24}/></button></div>
+                  
+                  <div className="flex gap-4 mb-6">
+                      <div className="flex-1 bg-slate-50 rounded-2xl p-4 border border-slate-100 text-center">
+                          <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Valor Base</p>
+                          <p className="text-xl font-bold text-slate-800">R$ {pagamentoModal.valorBase.toFixed(2)}</p>
+                      </div>
+                      <div className="flex-1 bg-red-50 rounded-2xl p-4 border border-red-100 text-center relative group">
+                          <p className="text-[10px] font-bold text-red-400 uppercase mb-1">Desconto</p>
+                          <div className="flex items-center justify-center gap-1">
+                              <span className="text-red-500 font-bold">R$</span>
+                              <input 
+                                  type="number" 
+                                  className="w-16 bg-transparent border-none p-0 text-xl font-bold text-red-600 focus:ring-0 text-center" 
+                                  value={pagamentoModal.desconto || ''} 
+                                  onChange={e => {
+                                      const val = parseFloat(e.target.value) || 0;
+                                      setPagamentoModal(prev => ({ ...prev, desconto: val }));
+                                      if (pagamentosParciais.length === 1) {
+                                          setPagamentosParciais([{ ...pagamentosParciais[0], valor: Math.max(0, pagamentoModal.valorBase - val) }]);
+                                      }
+                                  }} 
+                              />
+                          </div>
+                      </div>
+                  </div>
 
-                {/* QR CODE PERSONALIZADO (IGUAL À LOJA) */}
-                {pagamentosParciais.some(p => p.metodo === 'Pix') && (
-                    <div className="bg-blue-50 border-2 border-blue-200 p-4 rounded-[2rem] flex flex-col items-center animate-bounceIn mb-6 mt-4">
-                        <p className="text-[10px] font-black text-blue-600 uppercase mb-3 text-center">Escaneie para Pagar (Mensalidade)</p>
-                        <div className="bg-white p-2 rounded-2xl shadow-sm mb-3">
-                            {/* Substitua o link abaixo pelo link real da sua imagem de QR Code */}
-                            <img src="LINK_DA_SUA_IMAGEM_MENSALIDADE_AQUI" className="w-32 h-32 object-contain" alt="QR Pix Mensalidade" />
-                        </div>
-                        <div className="flex flex-col items-center gap-1">
-                            <p className="text-[10px] font-bold text-slate-400 uppercase">Chave Pix:</p>
-                            <div className="flex items-center gap-2">
-                                <span className="text-xs font-black text-blue-700">SUA_CHAVE_PIX_EXTENSO</span>
-                                <button 
-                                    type="button"
-                                    onClick={() => { navigator.clipboard.writeText('CHAVE_PIX_COPIA_E_COLA'); addToast('Copiado!', 'success'); }} 
-                                    className="text-blue-700 hover:bg-blue-100 p-1 rounded-lg transition-all"
-                                >
-                                    <Copy size={14}/>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                )}
+                  <div className="bg-slate-900 rounded-3xl p-6 text-center mb-6 shadow-lg">
+                      <p className="text-xs font-bold text-slate-400 uppercase mb-1">Total a Pagar</p>
+                      <p className="text-4xl font-black text-white italic">R$ {valorTotalCalculado.toFixed(2)}</p>
+                  </div>
+                  
+                  <div className="space-y-3 mb-6">
+                      {pagamentosParciais.map((p, idx) => (
+                          <div key={idx} className="flex gap-2">
+                              {/* SELETOR PRINCIPAL DO MÉTODO */}
+                              <select className="flex-1 bg-slate-50 border-none rounded-2xl p-4 font-bold text-sm" value={p.metodo} onChange={e=> { 
+                                  const n = [...pagamentosParciais]; 
+                                  n[idx].metodo = e.target.value; 
+                                  if (e.target.value === 'Cartao') {
+                                      n[idx].tipo = 'Crédito'; // Padrão ao selecionar cartão
+                                  } else {
+                                      delete n[idx].tipo;
+                                  }
+                                  setPagamentosParciais(n); 
+                              }}>
+                                  <option>Dinheiro</option><option>Pix</option><option value="Cartao">Cartão</option>
+                              </select>
+                              
+                              {/* SELETOR DE DÉBITO/CRÉDITO (Aparece só se for Cartão) */}
+                              {p.metodo === 'Cartao' && (
+                                  <select className="w-28 bg-slate-50 border-none rounded-2xl p-4 font-bold text-sm" value={p.tipo || 'Crédito'} onChange={e=> { 
+                                      const n = [...pagamentosParciais]; 
+                                      n[idx].tipo = e.target.value; 
+                                      setPagamentosParciais(n); 
+                                  }}>
+                                      <option value="Crédito">Crédito</option>
+                                      <option value="Débito">Débito</option>
+                                  </select>
+                              )}
 
-                <div className="mb-6 px-2 flex justify-between items-center text-sm border-t pt-4">
-                    <span className="text-slate-400 font-bold uppercase text-[10px]">Total Somado:</span>
-                    <span className={`font-black ${Math.abs(pagamentosParciais.reduce((a,b)=>a+b.valor,0) - pagamentoModal.valorTotal) < 0.1 ? 'text-green-600' : 'text-red-500'}`}>
-                        R$ {pagamentosParciais.reduce((a,b)=>a+b.valor,0).toFixed(2)}
-                    </span>
-                </div>
+                              <input type="number" className="w-28 bg-slate-50 border-none rounded-2xl p-4 font-black text-slate-900" value={p.valor} onChange={e=> { const n = [...pagamentosParciais]; n[idx].valor = parseFloat(e.target.value) || 0; setPagamentosParciais(n); }} />
+                          </div>
+                      ))}
+                      <button onClick={adicionarMetodo} className="text-xs font-bold text-blue-600 uppercase tracking-widest hover:underline">+ Adicionar e dividir</button>
+                  </div>
 
-                <button onClick={confirmarPagamento} className="w-full bg-slate-900 text-white py-5 rounded-[1.5rem] font-black uppercase tracking-widest shadow-xl shadow-slate-200 hover:bg-black transition-all">CONFIRMAR</button>
-            </div>
-        </div>
+                  {pagamentosParciais.some(p => p.metodo === 'Pix') && (
+                      <div className="bg-blue-50 border-2 border-blue-200 p-4 rounded-[2rem] flex flex-col items-center animate-bounceIn mb-6 mt-4">
+                          <p className="text-[10px] font-black text-blue-600 uppercase mb-3 text-center">Escaneie para Pagar (Mensalidade)</p>
+                          <div className="bg-white p-2 rounded-2xl shadow-sm mb-3">
+                              <img src="LINK_DA_SUA_IMAGEM_MENSALIDADE_AQUI" className="w-32 h-32 object-contain" alt="QR Pix Mensalidade" />
+                          </div>
+                          <div className="flex flex-col items-center gap-1">
+                              <p className="text-[10px] font-bold text-slate-400 uppercase">Chave Pix:</p>
+                              <div className="flex items-center gap-2">
+                                  <span className="text-xs font-black text-blue-700">SUA_CHAVE_PIX_EXTENSO</span>
+                                  <button type="button" onClick={() => { navigator.clipboard.writeText('CHAVE_PIX_COPIA_E_COLA'); addToast('Copiado!', 'success'); }} className="text-blue-700 hover:bg-blue-100 p-1 rounded-lg transition-all"><Copy size={14}/></button>
+                              </div>
+                          </div>
+                      </div>
+                  )}
+
+                  <div className="mb-6 px-2 flex justify-between items-center text-sm border-t pt-4">
+                      <span className="text-slate-400 font-bold uppercase text-[10px]">Total Somado:</span>
+                      <span className={`font-black ${Math.abs(pagamentosParciais.reduce((a,b)=>a+b.valor,0) - valorTotalCalculado) < 0.1 ? 'text-green-600' : 'text-red-500'}`}>
+                          R$ {pagamentosParciais.reduce((a,b)=>a+b.valor,0).toFixed(2)}
+                      </span>
+                  </div>
+
+                  <button onClick={confirmarPagamento} className="w-full bg-slate-900 text-white py-5 rounded-[1.5rem] font-black uppercase tracking-widest shadow-xl shadow-slate-200 hover:bg-black transition-all">CONFIRMAR E GERAR RECIBO</button>
+              </div>
+          </div>
+          );
+      })()}
+
+      {/* MODAL RECIBO DE PAGAMENTO COM OPÇÃO DE PDF */}
+      {reciboModal?.show && (
+          <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 z-[9999] animate-fadeIn">
+              <div className="w-full max-w-sm relative">
+                  <button onClick={() => setReciboModal(null)} className="absolute -top-4 -right-4 z-10 p-2 bg-white rounded-full shadow-lg hover:bg-slate-100"><X size={20}/></button>
+
+                  {/* ESTA É A ÁREA QUE O HTML2CANVAS VAI FOTOGRAFAR PARA O PDF */}
+                  <div ref={reciboRef} className="bg-white rounded-[2rem] p-8 shadow-2xl relative w-full overflow-hidden">
+                      <div className="text-center relative z-10">
+                          <div className="w-16 h-16 bg-slate-900 text-white rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
+                              <CheckCircle size={32} />
+                          </div>
+                          <h2 className="text-2xl font-black text-slate-900 uppercase tracking-tighter mb-1">BJJ College</h2>
+                          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-6 pb-6 border-b-2 border-dashed border-slate-200">Recibo de Pagamento</p>
+
+                          <div className="space-y-3 text-sm text-left mb-6">
+                              <div className="flex justify-between"><span className="text-slate-500 font-bold uppercase text-[10px]">Data:</span> <span className="font-bold text-slate-800">{format(reciboModal.dados.data, 'dd/MM/yyyy HH:mm')}</span></div>
+                              <div className="flex justify-between"><span className="text-slate-500 font-bold uppercase text-[10px]">Aluno:</span> <span className="font-bold text-slate-800">{reciboModal.dados.aluno}</span></div>
+                              <div className="flex justify-between"><span className="text-slate-500 font-bold uppercase text-[10px]">Referência:</span> <span className="font-bold text-slate-800">Mensalidade</span></div>
+                              <div className="flex justify-between"><span className="text-slate-500 font-bold uppercase text-[10px]">Operador:</span> <span className="font-bold text-slate-800">{reciboModal.dados.operador}</span></div>
+                          </div>
+
+                          <div className="bg-slate-50 rounded-2xl p-4 mb-6 border border-slate-100">
+                              <div className="flex justify-between text-sm mb-2"><span className="text-slate-500">Valor Base:</span> <span className="font-bold text-slate-800">R$ {reciboModal.dados.valorBase.toFixed(2)}</span></div>
+                              {reciboModal.dados.desconto > 0 && (
+                                  <div className="flex justify-between text-sm mb-2"><span className="text-red-400">Desconto:</span> <span className="font-bold text-red-600">- R$ {reciboModal.dados.desconto.toFixed(2)}</span></div>
+                              )}
+                              <div className="flex justify-between text-lg mt-2 pt-2 border-t border-slate-200"><span className="font-black text-slate-900 uppercase">Total Pago:</span> <span className="font-black text-green-600">R$ {reciboModal.dados.valorPago.toFixed(2)}</span></div>
+                          </div>
+
+                          <div className="text-left mb-6">
+                              <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">Métodos Utilizados:</p>
+                              {reciboModal.dados.metodos.map((m: any, i: number) => (
+                                  <div key={i} className="flex justify-between text-xs font-bold text-slate-700">
+                                      <span>{m.metodo === 'Cartao' ? `Cartão (${m.tipo})` : m.metodo}</span> 
+                                      <span>R$ {m.valor.toFixed(2)}</span>
+                                  </div>
+                              ))}
+                          </div>
+
+                          <p className="text-[10px] font-bold text-slate-400 uppercase italic">Obrigado por treinar conosco!</p>
+                      </div>
+                      
+                      {/* Elemento visual de fundo para o PDF ficar mais bonito */}
+                      <div className="absolute top-0 right-0 w-32 h-32 bg-slate-50 rounded-full blur-3xl -z-0 opacity-50 translate-x-10 -translate-y-10"></div>
+                      <div className="absolute bottom-0 left-0 w-32 h-32 bg-slate-50 rounded-full blur-3xl -z-0 opacity-50 -translate-x-10 translate-y-10"></div>
+                  </div>
+
+                  {/* BOTÕES DE AÇÃO (Ficam fora do PDF) */}
+                  <div className="flex gap-2 mt-4">
+                      <button onClick={gerarECompartilharPDF} className="flex-[2] bg-green-600 text-white py-4 rounded-2xl font-black uppercase flex items-center justify-center gap-2 hover:bg-green-700 shadow-xl shadow-green-200/50 transition-all">
+                          <Share2 size={20}/> Compartilhar PDF (ZAP)
+                      </button>
+                      <button onClick={() => {
+                          const texto = `🥋 *RECIBO DE PAGAMENTO - BJJ COLLEGE*\n\n📅 Data: ${format(reciboModal.dados.data, 'dd/MM/yyyy HH:mm')}\n👤 Aluno: ${reciboModal.dados.aluno}\n\n💰 *Valor Pago: R$ ${reciboModal.dados.valorPago.toFixed(2)}*\n(${reciboModal.dados.metodos.map((m:any) => m.metodo === 'Cartao' ? `Cartão ${m.tipo}` : m.metodo).join(', ')})\n\nOperador: ${reciboModal.dados.operador}\nObrigado por treinar conosco! Oss!`;
+                          navigator.clipboard.writeText(texto);
+                          addToast('Texto copiado!', 'success');
+                      }} className="flex-1 bg-slate-800 text-white py-4 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-slate-900 transition-all">
+                          <Copy size={20}/> Texto
+                      </button>
+                  </div>
+              </div>
+          </div>
       )}
 
-      {/* CUSTOM ALERT (NORMAL) */}
+      {/* CUSTOM ALERT E ALERT DE FORÇAR EXCLUSÃO ABAIXO */}
       {customAlert.show && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[999] animate-fadeIn">
           <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-sm shadow-2xl text-center">
@@ -690,21 +950,20 @@ export default function Alunos() {
         </div>
       )}
 
-      {/* ALERT DE FORÇAR EXCLUSÃO (NOVO) */}
       {forceDeleteAlert.show && (
         <div className="fixed inset-0 bg-red-900/80 backdrop-blur-md flex items-center justify-center p-4 z-[1000] animate-fadeIn">
           <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-md shadow-2xl text-center border-4 border-red-500">
             <div className="w-24 h-24 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-6 animate-pulse"><AlertTriangle size={50} /></div>
             <h3 className="text-2xl font-black text-red-600 uppercase italic mb-2">REGISTROS PRESOS!</h3>
             <p className="text-slate-600 mb-6 leading-relaxed font-bold">
-              Não conseguimos apagar <b>{forceDeleteAlert.nome}</b> porque ele(a) possui histórico financeiro (mensalidades ou vendas).
+              Não conseguimos apagar <b>{forceDeleteAlert.nome}</b> porque ele(a) possui histórico financeiro.
             </p>
             <p className="text-sm text-slate-500 mb-8 bg-slate-100 p-4 rounded-xl">
-              Deseja <b>FORÇAR A EXCLUSÃO</b>? Isso apagará o aluno e <u className="text-red-600">todo o seu histórico financeiro</u> para sempre.
+              Deseja <b>FORÇAR A EXCLUSÃO</b>? Isso apagará o aluno e <u className="text-red-600">todo o histórico</u> para sempre.
             </p>
             <div className="flex flex-col gap-3">
               <button onClick={executarExclusaoForcada} className="w-full py-4 bg-red-600 text-white rounded-[1.5rem] font-black uppercase shadow-xl hover:bg-red-700 hover:scale-105 transition-all">SIM, APAGAR TUDO</button>
-              <button onClick={() => setForceDeleteAlert({ show: false, id: '', nome: '' })} className="w-full py-4 bg-slate-100 text-slate-500 rounded-[1.5rem] font-bold uppercase text-xs hover:bg-slate-200">CANCELAR (MANTER ALUNO)</button>
+              <button onClick={() => setForceDeleteAlert({ show: false, id: '', nome: '' })} className="w-full py-4 bg-slate-100 text-slate-500 rounded-[1.5rem] font-bold uppercase text-xs hover:bg-slate-200">CANCELAR</button>
             </div>
           </div>
         </div>
