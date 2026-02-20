@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { startOfMonth, endOfMonth, format } from 'date-fns';
 import { useToast } from '../contexts/ToastContext';
-import { useAuth } from '../contexts/AuthContext'; // IMPORTANDO O SEU SISTEMA DE LOGIN
+import { useAuth } from '../contexts/AuthContext'; // PUXANDO O SEU SISTEMA DE LOGIN
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 
@@ -39,7 +39,7 @@ const DIAS_SEMANA = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
 
 export default function Alunos() {
   const { addToast } = useToast();
-  const { user } = useAuth(); // PEGANDO O USUÁRIO LOGADO AQUI
+  const { user } = useAuth(); // AQUI ESTÁ O USUÁRIO LOGADO
   const reciboRef = useRef<HTMLDivElement>(null); 
   
   const [alunos, setAlunos] = useState<Aluno[]>([]);
@@ -188,7 +188,7 @@ export default function Alunos() {
     }
 
     try {
-      // ATUALIZAÇÃO AQUI: Pega o nome do usuário do AuthContext (seu sistema próprio)
+      // CORREÇÃO: PEGANDO O NOME/USUÁRIO CORRETO DO SEU SISTEMA (AuthContext)
       const operadorNome = user?.nome || user?.usuario || 'Operador Local';
 
       await supabase.from('transacoes').insert([{
@@ -201,7 +201,7 @@ export default function Alunos() {
         detalhes_pagamento: { 
             metodos: pagamentosParciais,
             desconto_aplicado: pagamentoModal.desconto,
-            operador: operadorNome
+            operador: operadorNome // Salvando o nome no banco
         }
       }]);
 
@@ -214,7 +214,7 @@ export default function Alunos() {
           desconto: pagamentoModal.desconto,
           valorPago: valorTotalCalculado,
           metodos: pagamentosParciais,
-          operador: operadorNome // Enviando o nome correto para o PDF
+          operador: operadorNome // Enviando o nome para o PDF
       };
 
       setPagamentoModal({ show: false, aluno: null, valorBase: 0, desconto: 0 }); 
@@ -224,6 +224,7 @@ export default function Alunos() {
     } catch (error) { addToast('Erro ao registrar.', 'error'); }
   }
 
+  // --- FUNÇÃO BLINDADA COM RECIBO "FANTASMA" ---
   async function gerarECompartilharPDF() {
     if (!reciboRef.current || !reciboModal) return;
     
@@ -253,7 +254,7 @@ export default function Alunos() {
         pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
 
         const nomeAlunoFormatado = reciboModal.dados.aluno.replace(/\s+/g, '_');
-        const nomeArquivo = `Recibo_BJJCollege_${nomeAlunoFormatado}.pdf`;
+        const nomeArquivo = `Recibo_BJJCollege_Mensalidade_${nomeAlunoFormatado}.pdf`;
         const pdfBlob = pdf.output('blob');
 
         let shareSuccess = false;
@@ -944,7 +945,6 @@ export default function Alunos() {
               <div ref={reciboRef} style={{ width: '800px', backgroundColor: '#ffffff', padding: '60px', fontFamily: 'sans-serif' }}>
                   <div style={{ border: '2px solid #e2e8f0', borderRadius: '24px', padding: '50px', backgroundColor: '#ffffff' }}>
                       
-                      {/* Logo / Header Fixo */}
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', borderBottom: '2px dashed #cbd5e1', paddingBottom: '30px', marginBottom: '40px' }}>
                           <div style={{ width: '80px', height: '80px', backgroundColor: '#0f172a', borderRadius: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '20px' }}>
                               <CheckCircle color="white" size={40} />
@@ -953,7 +953,6 @@ export default function Alunos() {
                           <p style={{ fontSize: '18px', fontWeight: 'bold', color: '#64748b', margin: '8px 0 0 0', textTransform: 'uppercase', letterSpacing: '3px' }}>Recibo de Pagamento</p>
                       </div>
 
-                      {/* Dados Fixo */}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', marginBottom: '40px' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '22px' }}>
                               <span style={{ color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase' }}>Data:</span>
@@ -973,7 +972,6 @@ export default function Alunos() {
                           </div>
                       </div>
 
-                      {/* Valores Fixo */}
                       <div style={{ backgroundColor: '#f8fafc', padding: '30px', borderRadius: '20px', marginBottom: '40px', border: '1px solid #f1f5f9' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '22px', marginBottom: '16px' }}>
                               <span style={{ color: '#64748b' }}>Valor Base:</span>
@@ -991,7 +989,6 @@ export default function Alunos() {
                           </div>
                       </div>
 
-                      {/* Métodos Fixo */}
                       <div style={{ marginBottom: '40px' }}>
                           <p style={{ fontSize: '18px', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase', marginBottom: '20px' }}>Métodos Utilizados:</p>
                           {reciboModal.dados.metodos.map((m: any, i: number) => (
