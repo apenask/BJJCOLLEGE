@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { startOfMonth, endOfMonth, format } from 'date-fns';
 import { useToast } from '../contexts/ToastContext';
+import { useAuth } from '../contexts/AuthContext'; // IMPORTANDO O SEU SISTEMA DE LOGIN
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 
@@ -38,6 +39,7 @@ const DIAS_SEMANA = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
 
 export default function Alunos() {
   const { addToast } = useToast();
+  const { user } = useAuth(); // PEGANDO O USUÁRIO LOGADO AQUI
   const reciboRef = useRef<HTMLDivElement>(null); 
   
   const [alunos, setAlunos] = useState<Aluno[]>([]);
@@ -186,8 +188,8 @@ export default function Alunos() {
     }
 
     try {
-      const { data: authData } = await supabase.auth.getUser();
-      const operadorNome = authData?.user?.user_metadata?.nome || authData?.user?.email?.split('@')[0] || 'Operador Local';
+      // ATUALIZAÇÃO AQUI: Pega o nome do usuário do AuthContext (seu sistema próprio)
+      const operadorNome = user?.nome || user?.usuario || 'Operador Local';
 
       await supabase.from('transacoes').insert([{
         descricao: `Mensalidade - ${pagamentoModal.aluno.nome}`,
@@ -212,7 +214,7 @@ export default function Alunos() {
           desconto: pagamentoModal.desconto,
           valorPago: valorTotalCalculado,
           metodos: pagamentosParciais,
-          operador: operadorNome
+          operador: operadorNome // Enviando o nome correto para o PDF
       };
 
       setPagamentoModal({ show: false, aluno: null, valorBase: 0, desconto: 0 }); 
@@ -222,18 +224,15 @@ export default function Alunos() {
     } catch (error) { addToast('Erro ao registrar.', 'error'); }
   }
 
-  // --- FUNÇÃO BLINDADA COM RECIBO "FANTASMA" DE LARGURA FIXA ---
   async function gerarECompartilharPDF() {
     if (!reciboRef.current || !reciboModal) return;
     
     try {
         addToast('Gerando documento em alta qualidade...', 'info');
         
-        // Bloqueia rolagem temporariamente para o canvas não falhar no iOS
         const originalOverflow = document.body.style.overflow;
         document.body.style.overflow = 'hidden';
 
-        // O segredo: ele captura o recibo fantasma que tem exatamente 800px cravados
         const canvas = await html2canvas(reciboRef.current, { 
             scale: 2, 
             backgroundColor: '#ffffff',
@@ -257,7 +256,6 @@ export default function Alunos() {
         const nomeArquivo = `Recibo_BJJCollege_${nomeAlunoFormatado}.pdf`;
         const pdfBlob = pdf.output('blob');
 
-        // PLANO A: Tentar forçar o botão de compartilhar nativo (WhatsApp, etc)
         let shareSuccess = false;
         try {
             const file = new File([pdfBlob], nomeArquivo, { type: 'application/pdf' });
@@ -272,11 +270,10 @@ export default function Alunos() {
             if (shareError.name !== 'AbortError') {
                 console.warn("Compartilhamento nativo bloqueado", shareError);
             } else {
-                return; // Usuário abriu o share e fechou
+                return; 
             }
         }
 
-        // PLANO B: Se não compartilhar (Normal em iPhone Safari), baixa como âncora
         if (!shareSuccess) {
             const objectUrl = window.URL.createObjectURL(pdfBlob);
             const link = document.createElement('a');
