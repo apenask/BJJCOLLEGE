@@ -5,9 +5,9 @@ import {
   Brain, DollarSign, X, 
   HeartPulse, Cake, Phone, ChevronLeft, Trophy, Medal, Zap, AlertTriangle, Droplet, ShoppingBag, Copy, Share2
 } from 'lucide-react';
-import { startOfMonth, endOfMonth, format } from 'date-fns';
+import { startOfMonth, endOfMonth, format, addMonths } from 'date-fns';
 import { useToast } from '../contexts/ToastContext';
-import { useAuth } from '../contexts/AuthContext'; // PUXANDO O SEU SISTEMA DE LOGIN
+import { useAuth } from '../contexts/AuthContext';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 
@@ -32,6 +32,7 @@ interface Aluno {
   bolsista_musculacao: boolean;
   atleta: boolean;
   pago_mes_atual?: boolean;
+  pago_proximo_mes?: boolean;
   divida_loja?: number; 
 }
 
@@ -39,7 +40,7 @@ const DIAS_SEMANA = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
 
 export default function Alunos() {
   const { addToast } = useToast();
-  const { user } = useAuth(); // AQUI ESTÁ O USUÁRIO LOGADO
+  const { user } = useAuth();
   const reciboRef = useRef<HTMLDivElement>(null); 
   
   const [alunos, setAlunos] = useState<Aluno[]>([]);
@@ -66,10 +67,16 @@ export default function Alunos() {
   const [customAlert, setCustomAlert] = useState({ show: false, id: '', nome: '' });
   const [forceDeleteAlert, setForceDeleteAlert] = useState({ show: false, id: '', nome: '' }); 
   
-  const [pagamentoModal, setPagamentoModal] = useState<{ show: boolean, aluno: Aluno | null, valorBase: number, desconto: number }>({ show: false, aluno: null, valorBase: 0, desconto: 0 });
+  const [pagamentoModal, setPagamentoModal] = useState<{ show: boolean, aluno: Aluno | null, valorBase: number, desconto: number, mesReferencia: string }>({ show: false, aluno: null, valorBase: 0, desconto: 0, mesReferencia: '' });
   const [pagamentosParciais, setPagamentosParciais] = useState<{ metodo: string, valor: number, tipo?: string }[]>([]);
 
   const [reciboModal, setReciboModal] = useState<{ show: boolean, dados: any } | null>(null);
+
+  const mesAtualRef = format(new Date(), 'MM/yyyy');
+  const proximoMesRef = format(addMonths(new Date(), 1), 'MM/yyyy');
+  const mesesNomes = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+  const mesAtualNome = mesesNomes[new Date().getMonth()];
+  const proximoMesNome = mesesNomes[addMonths(new Date(), 1).getMonth()];
 
   useEffect(() => { fetchAlunos(); }, []);
 
@@ -77,18 +84,21 @@ export default function Alunos() {
     setLoading(true);
     try {
       const { data: dadosAlunos } = await supabase.from('alunos').select('*').order('nome');
-      const inicioMes = startOfMonth(new Date()).toISOString();
-      const fimMes = endOfMonth(new Date()).toISOString();
 
       const { data: pagamentos } = await supabase
         .from('transacoes')
-        .select('aluno_id')
+        .select('aluno_id, data, mes_referencia')
         .eq('tipo', 'Receita')
-        .eq('categoria', 'Mensalidade')
-        .gte('data', inicioMes)
-        .lte('data', fimMes);
+        .eq('categoria', 'Mensalidade');
 
-      const pagantesSet = new Set(pagamentos?.map(p => p.aluno_id));
+      const pagantesAtual = new Set();
+      const pagantesProximo = new Set();
+
+      pagamentos?.forEach(p => {
+          const ref = p.mes_referencia || format(new Date(p.data), 'MM/yyyy');
+          if (ref === mesAtualRef) pagantesAtual.add(p.aluno_id);
+          if (ref === proximoMesRef) pagantesProximo.add(p.aluno_id);
+      });
       
       const { data: dividas } = await supabase.from('transacoes')
          .select('aluno_id, valor')
@@ -103,7 +113,8 @@ export default function Alunos() {
       
       const alunosProc = dadosAlunos?.map((aluno: any) => ({
         ...aluno,
-        pago_mes_atual: pagantesSet.has(aluno.id) || aluno.bolsista_jiujitsu,
+        pago_mes_atual: pagantesAtual.has(aluno.id) || aluno.bolsista_jiujitsu,
+        pago_proximo_mes: pagantesProximo.has(aluno.id) || aluno.bolsista_jiujitsu,
         divida_loja: dividaMap.get(aluno.id) || 0
       }));
       setAlunos(alunosProc || []);
@@ -168,11 +179,11 @@ export default function Alunos() {
       return res.join(' e ');
   }
 
-  function abrirModalPagamento(aluno: Aluno) {
+  function abrirModalPagamento(aluno: Aluno, mesRef: string) {
     let valor = 80.00;
     if (aluno.plano_tipo === '3 Dias') valor = 70.00;
     if (aluno.plano_tipo === '2 Dias') valor = 60.00;
-    setPagamentoModal({ show: true, aluno, valorBase: valor, desconto: 0 });
+    setPagamentoModal({ show: true, aluno, valorBase: valor, desconto: 0, mesReferencia: mesRef });
     setPagamentosParciais([{ metodo: 'Dinheiro', valor: valor }]); 
   }
 
@@ -188,20 +199,20 @@ export default function Alunos() {
     }
 
     try {
-      // CORREÇÃO: PEGANDO O NOME/USUÁRIO CORRETO DO SEU SISTEMA (AuthContext)
       const operadorNome = user?.nome || user?.usuario || 'Operador Local';
 
       await supabase.from('transacoes').insert([{
-        descricao: `Mensalidade - ${pagamentoModal.aluno.nome}`,
+        descricao: `Mensalidade (${pagamentoModal.mesReferencia}) - ${pagamentoModal.aluno.nome}`,
         valor: valorTotalCalculado,
         tipo: 'Receita',
         categoria: 'Mensalidade',
-        data: new Date().toISOString(),
+        data: new Date().toISOString(), 
+        mes_referencia: pagamentoModal.mesReferencia, 
         aluno_id: pagamentoModal.aluno.id,
         detalhes_pagamento: { 
             metodos: pagamentosParciais,
             desconto_aplicado: pagamentoModal.desconto,
-            operador: operadorNome // Salvando o nome no banco
+            operador: operadorNome
         }
       }]);
 
@@ -210,21 +221,21 @@ export default function Alunos() {
       const dadosRecibo = {
           aluno: pagamentoModal.aluno.nome,
           data: new Date(),
+          referencia: `Mensalidade (${pagamentoModal.mesReferencia})`, 
           valorBase: pagamentoModal.valorBase,
           desconto: pagamentoModal.desconto,
           valorPago: valorTotalCalculado,
           metodos: pagamentosParciais,
-          operador: operadorNome // Enviando o nome para o PDF
+          operador: operadorNome
       };
 
-      setPagamentoModal({ show: false, aluno: null, valorBase: 0, desconto: 0 }); 
+      setPagamentoModal({ show: false, aluno: null, valorBase: 0, desconto: 0, mesReferencia: '' }); 
       setReciboModal({ show: true, dados: dadosRecibo });
       
       fetchAlunos();
     } catch (error) { addToast('Erro ao registrar.', 'error'); }
   }
 
-  // --- FUNÇÃO BLINDADA COM RECIBO "FANTASMA" ---
   async function gerarECompartilharPDF() {
     if (!reciboRef.current || !reciboModal) return;
     
@@ -254,7 +265,7 @@ export default function Alunos() {
         pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
 
         const nomeAlunoFormatado = reciboModal.dados.aluno.replace(/\s+/g, '_');
-        const nomeArquivo = `Recibo_BJJCollege_Mensalidade_${nomeAlunoFormatado}.pdf`;
+        const nomeArquivo = `Recibo_BJJCollege_${nomeAlunoFormatado}.pdf`;
         const pdfBlob = pdf.output('blob');
 
         let shareSuccess = false;
@@ -303,6 +314,7 @@ export default function Alunos() {
       try {
         const alunoData = { ...formData };
         delete (alunoData as any).pago_mes_atual; 
+        delete (alunoData as any).pago_proximo_mes; 
         delete (alunoData as any).divida_loja; 
 
         if (!alunoData.plano_tipo) alunoData.plano_tipo = 'Todos os dias';
@@ -383,12 +395,19 @@ export default function Alunos() {
     setViewState('form');
   }
 
+  // FUNÇÃO DE LIMPEZA: Garante que ao voltar, nenhum modal fique "fantasma"
+  function handleVoltarLista() {
+      setPagamentoModal({ show: false, aluno: null, valorBase: 0, desconto: 0, mesReferencia: '' });
+      setReciboModal(null);
+      setViewState('list');
+  }
+
   if (viewState === 'details' && selectedAluno) {
     const a = selectedAluno;
     return (
         <div className="animate-fadeIn pb-10">
             <div className="flex items-center justify-between mb-6">
-                <button onClick={() => setViewState('list')} className="flex items-center gap-2 text-slate-500 hover:text-slate-800 font-bold transition-all">
+                <button onClick={handleVoltarLista} className="flex items-center gap-2 text-slate-500 hover:text-slate-800 font-bold transition-all">
                     <ChevronLeft size={24}/> Voltar para Lista
                 </button>
                 <div className="flex gap-2">
@@ -418,33 +437,60 @@ export default function Alunos() {
                             {a.status === 'Inativo' && <span className="bg-red-100 text-red-600 text-[10px] font-black px-3 py-1 rounded-full uppercase">INATIVO</span>}
                         </div>
 
-                        <div className="w-full p-4 rounded-3xl border border-slate-100 bg-slate-50 mb-4 text-left">
-                            <p className="text-[10px] font-black text-slate-400 uppercase mb-2">Situação Financeira</p>
-                            <div className="flex flex-col gap-3">
+                        {/* NOVO PAINEL DE MENSALIDADES - BOTÕES GRANDES E CLAROS */}
+                        <div className="w-full p-6 rounded-3xl border border-slate-100 bg-slate-50 mb-6 shadow-sm">
+                            <p className="text-[10px] font-black text-slate-400 uppercase mb-4 tracking-widest border-b border-slate-200 pb-2">Controle de Mensalidades</p>
+                            
+                            <div className="space-y-4">
                                 {a.status === 'Inativo' ? (
-                                    <div className="flex items-center gap-2 text-slate-400 font-black uppercase text-sm">
+                                    <div className="flex items-center justify-center gap-2 text-slate-400 font-black uppercase text-sm py-4">
                                         <X size={20}/> Mensalidade Suspensa
                                     </div>
-                                ) : a.pago_mes_atual ? (
-                                    <div className="flex items-center gap-2 text-green-600 font-black uppercase text-sm">
-                                        <CheckCircle size={20}/> Mensalidade em Dia
-                                    </div>
                                 ) : (
-                                    <div className="flex justify-between items-center">
-                                        <div className="flex items-center gap-2 text-red-500 font-black uppercase text-sm">
-                                            <X size={20}/> Pagamento Pendente
+                                    <>
+                                        {/* PAINEL MÊS ATUAL */}
+                                        <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex flex-col gap-3">
+                                            <div className="flex justify-between items-center">
+                                                <p className="font-bold text-slate-800 uppercase text-sm">Mês Atual: {mesAtualNome} <span className="text-[10px] text-slate-400">({mesAtualRef.split('/')[1]})</span></p>
+                                            </div>
+                                            {a.pago_mes_atual ? (
+                                                <div className="w-full bg-green-50 text-green-700 py-3 rounded-xl font-black uppercase text-xs flex justify-center items-center gap-2 border border-green-100">
+                                                    <CheckCircle size={16}/> Pago
+                                                </div>
+                                            ) : (
+                                                <button 
+                                                    onClick={(e) => { e.preventDefault(); abrirModalPagamento(a, mesAtualRef); }}
+                                                    className="w-full bg-green-500 text-white py-3 rounded-xl font-black uppercase text-xs flex justify-center items-center gap-2 hover:bg-green-600 shadow-md transition-all active:scale-95"
+                                                >
+                                                    <DollarSign size={18}/> Receber Mensalidade
+                                                </button>
+                                            )}
                                         </div>
-                                        <button 
-                                            onClick={() => abrirModalPagamento(a)}
-                                            className="bg-green-500 text-white p-2 rounded-xl shadow-lg hover:bg-green-600 transition-all"
-                                        >
-                                            <DollarSign size={16}/>
-                                        </button>
-                                    </div>
+
+                                        {/* PAINEL PRÓXIMO MÊS */}
+                                        <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex flex-col gap-3">
+                                            <div className="flex justify-between items-center">
+                                                <p className="font-bold text-slate-800 uppercase text-sm">Próximo Mês: {proximoMesNome} <span className="text-[10px] text-slate-400">({proximoMesRef.split('/')[1]})</span></p>
+                                            </div>
+                                            {a.pago_proximo_mes ? (
+                                                <div className="w-full bg-green-50 text-green-700 py-3 rounded-xl font-black uppercase text-xs flex justify-center items-center gap-2 border border-green-100">
+                                                    <CheckCircle size={16}/> Pago Antecipado
+                                                </div>
+                                            ) : (
+                                                <button 
+                                                    onClick={(e) => { e.preventDefault(); abrirModalPagamento(a, proximoMesRef); }}
+                                                    className="w-full bg-slate-900 text-white py-3 rounded-xl font-black uppercase text-xs flex justify-center items-center gap-2 hover:bg-black shadow-md transition-all active:scale-95"
+                                                >
+                                                    <DollarSign size={18} className="text-green-400"/> Adiantar Pagamento
+                                                </button>
+                                            )}
+                                        </div>
+                                    </>
                                 )}
 
+                                {/* DÍVIDA NA LOJA */}
                                 {(a.divida_loja || 0) > 0 && (
-                                    <div className="bg-red-50 border border-red-100 p-4 rounded-2xl flex items-center justify-between animate-pulse">
+                                    <div className="bg-red-50 border border-red-100 p-4 rounded-2xl flex items-center justify-between animate-pulse mt-2">
                                         <div className="flex items-center gap-3 text-red-600">
                                             <div className="p-2 bg-white rounded-lg shadow-sm"><ShoppingBag size={18}/></div>
                                             <div>
@@ -559,7 +605,7 @@ export default function Alunos() {
           <div className="bg-slate-50 min-h-screen p-2 md:p-6 animate-fadeIn">
               <div className="max-w-4xl mx-auto">
                   <div className="flex items-center justify-between mb-8 italic uppercase font-black text-slate-800">
-                      <button onClick={() => setViewState('list')} className="p-2 hover:bg-white rounded-full transition-colors"><ChevronLeft size={28}/></button>
+                      <button onClick={handleVoltarLista} className="p-2 hover:bg-white rounded-full transition-colors"><ChevronLeft size={28}/></button>
                       <h2 className="text-2xl">{editMode ? 'Editar Perfil' : 'Novo Aluno'}</h2>
                       <div className="w-10"></div>
                   </div>
@@ -702,7 +748,7 @@ export default function Alunos() {
                       </div>
 
                       <div className="flex gap-4 pb-10">
-                          <button type="button" onClick={()=>setViewState('list')} className="flex-1 bg-white text-slate-400 py-5 rounded-[2rem] font-bold border border-slate-200 hover:bg-slate-50">CANCELAR</button>
+                          <button type="button" onClick={handleVoltarLista} className="flex-1 bg-white text-slate-400 py-5 rounded-[2rem] font-bold border border-slate-200 hover:bg-slate-50">CANCELAR</button>
                           <button type="submit" className="flex-[2] bg-slate-900 text-white py-5 rounded-[2rem] font-black uppercase tracking-widest hover:bg-black shadow-xl">SALVAR CADASTRO</button>
                       </div>
                   </form>
@@ -769,7 +815,7 @@ export default function Alunos() {
                           ) : (
                               <div className="flex items-center justify-center gap-3">
                                   <span className="text-[10px] font-black text-red-400 uppercase tracking-tighter">Pendente</span>
-                                  <button onClick={(e) => { e.stopPropagation(); abrirModalPagamento(aluno); }} className="w-10 h-10 bg-green-500 text-white rounded-xl hover:bg-green-600 shadow-md flex items-center justify-center transition-all hover:scale-110"><DollarSign size={20} /></button>
+                                  <button onClick={(e) => { e.stopPropagation(); abrirModalPagamento(aluno, mesAtualRef); }} className="w-10 h-10 bg-green-500 text-white rounded-xl hover:bg-green-600 shadow-md flex items-center justify-center transition-all hover:scale-110"><DollarSign size={20} /></button>
                               </div>
                           )}
                       </td>
@@ -791,7 +837,10 @@ export default function Alunos() {
           return (
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
               <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-md shadow-2xl animate-fadeIn border">
-                  <div className="flex justify-between mb-6 italic font-black uppercase"><h3>Receber Pagamento</h3><button onClick={()=>setPagamentoModal({show:false, aluno:null, valorBase:0, desconto:0})}><X size={24}/></button></div>
+                  <div className="flex justify-between mb-6 italic font-black uppercase">
+                      <h3>Receber Mensalidade <span className="text-blue-600 border border-blue-200 bg-blue-50 px-2 py-1 rounded-lg text-xs ml-2">{pagamentoModal.mesReferencia}</span></h3>
+                      <button onClick={()=>setPagamentoModal({show:false, aluno:null, valorBase:0, desconto:0, mesReferencia: ''})}><X size={24}/></button>
+                  </div>
                   
                   <div className="flex gap-4 mb-6">
                       <div className="flex-1 bg-slate-50 rounded-2xl p-4 border border-slate-100 text-center">
@@ -898,7 +947,7 @@ export default function Alunos() {
                           <div className="space-y-3 text-sm text-left mb-6">
                               <div className="flex justify-between"><span className="text-slate-500 font-bold uppercase text-[10px]">Data:</span> <span className="font-bold text-slate-800">{format(reciboModal.dados.data, 'dd/MM/yyyy HH:mm')}</span></div>
                               <div className="flex justify-between"><span className="text-slate-500 font-bold uppercase text-[10px]">Aluno:</span> <span className="font-bold text-slate-800">{reciboModal.dados.aluno}</span></div>
-                              <div className="flex justify-between"><span className="text-slate-500 font-bold uppercase text-[10px]">Referência:</span> <span className="font-bold text-slate-800">Mensalidade</span></div>
+                              <div className="flex justify-between"><span className="text-slate-500 font-bold uppercase text-[10px]">Referência:</span> <span className="font-bold text-slate-800">{reciboModal.dados.referencia}</span></div>
                               <div className="flex justify-between"><span className="text-slate-500 font-bold uppercase text-[10px]">Operador:</span> <span className="font-bold text-slate-800">{reciboModal.dados.operador}</span></div>
                           </div>
 
@@ -927,12 +976,19 @@ export default function Alunos() {
                       <div className="absolute bottom-0 left-0 w-32 h-32 bg-slate-50 rounded-full blur-3xl -z-0 opacity-50 -translate-x-10 translate-y-10"></div>
                   </div>
 
-                  <div className="flex mt-4">
+                  <div className="flex gap-2 mt-4">
                       <button 
                           onClick={gerarECompartilharPDF} 
                           className="w-full bg-green-600 text-white py-4 rounded-2xl font-black uppercase flex items-center justify-center gap-2 hover:bg-green-700 shadow-xl shadow-green-200/50 transition-all"
                       >
                           <Share2 size={20}/> Compartilhar
+                      </button>
+                      <button onClick={() => {
+                          const texto = `🥋 *RECIBO DE PAGAMENTO - BJJ COLLEGE*\n\n📅 Data: ${format(reciboModal.dados.data, 'dd/MM/yyyy HH:mm')}\n👤 Aluno: ${reciboModal.dados.aluno}\n🏷️ Referência: ${reciboModal.dados.referencia}\n\n💰 *Valor Pago: R$ ${reciboModal.dados.valorPago.toFixed(2)}*\n(${reciboModal.dados.metodos.map((m:any) => m.metodo === 'Cartao' ? `Cartão ${m.tipo}` : m.metodo).join(', ')})\n\nOperador: ${reciboModal.dados.operador}\nObrigado por treinar conosco! Oss!`;
+                          navigator.clipboard.writeText(texto);
+                          addToast('Texto copiado!', 'success');
+                      }} className="bg-slate-800 text-white px-6 rounded-2xl font-bold flex items-center justify-center hover:bg-slate-900 transition-all">
+                          <Copy size={20}/>
                       </button>
                   </div>
               </div>
@@ -964,7 +1020,7 @@ export default function Alunos() {
                           </div>
                           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '22px' }}>
                               <span style={{ color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase' }}>Referência:</span>
-                              <span style={{ color: '#0f172a', fontWeight: 'bold' }}>Mensalidade</span>
+                              <span style={{ color: '#0f172a', fontWeight: 'bold' }}>{reciboModal.dados.referencia}</span>
                           </div>
                           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '22px' }}>
                               <span style={{ color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase' }}>Operador:</span>
