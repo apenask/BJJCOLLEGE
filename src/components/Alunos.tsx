@@ -635,7 +635,7 @@ export default function Alunos() {
                                         <span className="font-black text-blue-600 text-xs uppercase">{a.plano_dias?.join(' • ') || 'A Definir'}</span>
                                     </div>
                                     <div className="flex justify-between border-b border-slate-50 pb-2 mt-4">
-                                        <span className="text-slate-400 font-bold uppercase text-xs">Tempo de Treino</span>
+                                        <span className="text-slate-400 font-bold uppercase text-xs">Matrícula</span>
                                         <span className="font-black text-slate-800 text-xs text-right">
                                             {a.data_matricula ? format(new Date(a.data_matricula), 'dd/MM/yyyy') : 'N/A'}<br/>
                                             <span className="text-[10px] text-blue-600 italic uppercase">{calcularTempoTreino(a.data_matricula)}</span>
