@@ -38,7 +38,7 @@ const DIAS_SEMANA = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
 
 export default function Alunos() {
   const { addToast } = useToast();
-  const reciboRef = useRef<HTMLDivElement>(null); // Ref para capturar o recibo para PDF
+  const reciboRef = useRef<HTMLDivElement>(null); 
   
   const [alunos, setAlunos] = useState<Aluno[]>([]);
   const [loading, setLoading] = useState(true);
@@ -222,18 +222,15 @@ export default function Alunos() {
     } catch (error) { addToast('Erro ao registrar.', 'error'); }
   }
 
-  // --- FUNÇÃO PARA GERAR E COMPARTILHAR PDF ---
   async function gerarECompartilharPDF() {
     if (!reciboRef.current || !reciboModal) return;
     
     try {
         addToast('Gerando PDF...', 'info');
         
-        // 1. Tira uma foto da div do recibo (escondendo os botões que ficam de fora da ref)
         const canvas = await html2canvas(reciboRef.current, { scale: 2, backgroundColor: '#ffffff' });
         const imgData = canvas.toDataURL('image/png');
 
-        // 2. Cria o arquivo PDF
         const pdf = new jsPDF({
             orientation: 'portrait',
             unit: 'mm',
@@ -246,15 +243,12 @@ export default function Alunos() {
 
         pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
 
-        // 3. Define o nome do arquivo padrão que você pediu
         const nomeAlunoFormatado = reciboModal.dados.aluno.replace(/\s+/g, '_');
         const nomeArquivo = `Recibo_BJJCollege_Mensalidade_${nomeAlunoFormatado}.pdf`;
 
-        // 4. Prepara o PDF para compartilhamento
         const pdfBlob = pdf.output('blob');
         const file = new File([pdfBlob], nomeArquivo, { type: 'application/pdf' });
 
-        // Verifica se o dispositivo suporta compartilhamento de arquivos (Ex: Celulares)
         if (navigator.canShare && navigator.canShare({ files: [file] })) {
             await navigator.share({
                 files: [file],
@@ -263,7 +257,6 @@ export default function Alunos() {
             });
             addToast('Compartilhamento aberto com sucesso!', 'success');
         } else {
-            // Fallback: Se estiver no PC ou navegador que não suporta share, ele faz o download
             pdf.save(nomeArquivo);
             addToast('PDF baixado! Você pode anexar direto no WhatsApp Web.', 'success');
         }
@@ -921,7 +914,7 @@ export default function Alunos() {
                   {/* BOTÕES DE AÇÃO (Ficam fora do PDF) */}
                   <div className="flex gap-2 mt-4">
                       <button onClick={gerarECompartilharPDF} className="flex-[2] bg-green-600 text-white py-4 rounded-2xl font-black uppercase flex items-center justify-center gap-2 hover:bg-green-700 shadow-xl shadow-green-200/50 transition-all">
-                          <Share2 size={20}/> Compartilhar PDF (ZAP)
+                          <Share2 size={20}/> Compartilhar
                       </button>
                       <button onClick={() => {
                           const texto = `🥋 *RECIBO DE PAGAMENTO - BJJ COLLEGE*\n\n📅 Data: ${format(reciboModal.dados.data, 'dd/MM/yyyy HH:mm')}\n👤 Aluno: ${reciboModal.dados.aluno}\n\n💰 *Valor Pago: R$ ${reciboModal.dados.valorPago.toFixed(2)}*\n(${reciboModal.dados.metodos.map((m:any) => m.metodo === 'Cartao' ? `Cartão ${m.tipo}` : m.metodo).join(', ')})\n\nOperador: ${reciboModal.dados.operador}\nObrigado por treinar conosco! Oss!`;
