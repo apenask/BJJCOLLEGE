@@ -67,7 +67,7 @@ export default function Alunos() {
   const [customAlert, setCustomAlert] = useState({ show: false, id: '', nome: '' });
   const [forceDeleteAlert, setForceDeleteAlert] = useState({ show: false, id: '', nome: '' }); 
   
-  const [pagamentoModal, setPagamentoModal] = useState<{ show: boolean, aluno: Aluno | null, valorBase: number, desconto: number, mesReferencia: string }>({ show: false, aluno: null, valorBase: 0, desconto: 0, mesReferencia: '' });
+  const [pagamentoModal, setPagamentoModal] = useState<{ show: boolean, aluno: Aluno | null, valorBase: number, desconto: number, mesReferencia: string, dataPagamento: string }>({ show: false, aluno: null, valorBase: 0, desconto: 0, mesReferencia: '', dataPagamento: new Date().toISOString().split('T')[0] });
   const [pagamentosParciais, setPagamentosParciais] = useState<{ metodo: string, valor: number, tipo?: string }[]>([]);
 
   const [reciboModal, setReciboModal] = useState<{ show: boolean, dados: any } | null>(null);
@@ -198,7 +198,7 @@ export default function Alunos() {
     let valor = 80.00;
     if (aluno.plano_tipo === '3 Dias') valor = 70.00;
     if (aluno.plano_tipo === '2 Dias') valor = 60.00;
-    setPagamentoModal({ show: true, aluno, valorBase: valor, desconto: 0, mesReferencia: mesRef });
+    setPagamentoModal({ show: true, aluno, valorBase: valor, desconto: 0, mesReferencia: mesRef, dataPagamento: new Date().toISOString().split('T')[0] });
     setPagamentosParciais([{ metodo: 'Dinheiro', valor: valor }]); 
   }
 
@@ -221,7 +221,7 @@ export default function Alunos() {
         valor: valorTotalCalculado,
         tipo: 'Receita',
         categoria: 'Mensalidade',
-        data: new Date().toISOString(), 
+        data: new Date(`${pagamentoModal.dataPagamento}T12:00:00`).toISOString(), 
         mes_referencia: pagamentoModal.mesReferencia, 
         aluno_id: pagamentoModal.aluno.id,
         detalhes_pagamento: { 
@@ -235,7 +235,7 @@ export default function Alunos() {
 
       const dadosRecibo = {
           aluno: pagamentoModal.aluno.nome,
-          data: new Date(),
+          data: new Date(`${pagamentoModal.dataPagamento}T12:00:00`),
           referencia: `Mensalidade (${pagamentoModal.mesReferencia})`, 
           valorBase: pagamentoModal.valorBase,
           desconto: pagamentoModal.desconto,
@@ -244,7 +244,7 @@ export default function Alunos() {
           operador: operadorNome
       };
 
-      setPagamentoModal({ show: false, aluno: null, valorBase: 0, desconto: 0, mesReferencia: '' }); 
+      setPagamentoModal({ show: false, aluno: null, valorBase: 0, desconto: 0, mesReferencia: '', dataPagamento: new Date().toISOString().split('T')[0] }); 
       setReciboModal({ show: true, dados: dadosRecibo });
       
       fetchAlunos();
@@ -412,7 +412,7 @@ export default function Alunos() {
 
   // --- Função de Segurança para Voltar limpando rastros ---
   function handleVoltarLista() {
-      setPagamentoModal({ show: false, aluno: null, valorBase: 0, desconto: 0, mesReferencia: '' });
+      setPagamentoModal({ show: false, aluno: null, valorBase: 0, desconto: 0, mesReferencia: '', dataPagamento: new Date().toISOString().split('T')[0] });
       setReciboModal(null);
       setViewState('list');
   }
@@ -898,7 +898,17 @@ export default function Alunos() {
               <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-md shadow-2xl animate-fadeIn border">
                   <div className="flex justify-between mb-6 italic font-black uppercase">
                       <h3>Receber Mensalidade <span className="text-blue-600 border border-blue-200 bg-blue-50 px-2 py-1 rounded-lg text-xs ml-2">{pagamentoModal.mesReferencia}</span></h3>
-                      <button onClick={()=>setPagamentoModal({show:false, aluno:null, valorBase:0, desconto:0, mesReferencia: ''})}><X size={24}/></button>
+                      <button onClick={()=>setPagamentoModal({show:false, aluno:null, valorBase:0, desconto:0, mesReferencia: '', dataPagamento: new Date().toISOString().split('T')[0]})}><X size={24}/></button>
+                  </div>
+
+                  <div className="mb-4">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Data do Pagamento</label>
+                      <input 
+                          type="date" 
+                          className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-4 font-bold text-slate-700 mt-1 focus:ring-2 focus:ring-blue-500 outline-none" 
+                          value={pagamentoModal.dataPagamento} 
+                          onChange={e => setPagamentoModal(prev => ({ ...prev, dataPagamento: e.target.value }))}
+                      />
                   </div>
                   
                   <div className="flex gap-4 mb-6">
