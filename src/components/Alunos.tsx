@@ -387,7 +387,6 @@ export default function Alunos() {
     else setFormData({ ...formData, plano_dias: [...diasAtuais, dia] });
   };
 
-  // --- LÓGICA DE FILTRO CORRIGIDA (Busca apenas na turma atual e ignora acentos) ---
   const filteredAlunos = alunos.filter(aluno => {
     // 1. Respeita a Turma (Adulto, Infantil, Kids)
     const matchCategoria = (aluno.categoria === tabAtual || (!aluno.categoria && tabAtual === 'Adulto'));
@@ -406,6 +405,15 @@ export default function Alunos() {
     
     return matchCategoria && matchBusca;
   });
+
+  // --- LÓGICA DE AGRUPAMENTO DE PLANOS (Apenas para a aba Adulto) ---
+  const gruposAlunos = tabAtual === 'Adulto' ? [
+    { titulo: 'Plano: Todos os Dias', alunos: filteredAlunos.filter(a => a.plano_tipo === 'Todos os dias' || !a.plano_tipo) },
+    { titulo: 'Plano: 3 Dias na Semana', alunos: filteredAlunos.filter(a => a.plano_tipo === '3 Dias') },
+    { titulo: 'Plano: 2 Dias na Semana', alunos: filteredAlunos.filter(a => a.plano_tipo === '2 Dias') }
+  ].filter(g => g.alunos.length > 0) : [
+    { titulo: '', alunos: filteredAlunos }
+  ];
 
   function handleNovoAluno() {
     setFormData({
@@ -468,53 +476,69 @@ export default function Alunos() {
                         <tr>
                             <td colSpan={3} className="p-8 text-center text-slate-500 font-medium">Nenhum aluno encontrado na turma {tabAtual}.</td>
                         </tr>
-                    ) : filteredAlunos.map(aluno => (
-                      <tr key={aluno.id} className="hover:bg-slate-50/50 transition-colors">
-                          <td className="p-4 cursor-pointer group" onClick={() => { setSelectedAluno(aluno); setViewState('details'); }}>
-                              <div className="flex items-center gap-4">
-                                  <div className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center relative border border-slate-200 overflow-hidden shadow-inner">
-                                      {aluno.foto_url ? <img src={aluno.foto_url} className="w-full h-full object-cover" /> : <User className="text-slate-300" size={24}/>}
-                                      {aluno.neurodivergente && <div className="absolute top-1 right-1 bg-purple-600 text-white p-1 rounded-full border border-white shadow-sm"><Brain size={10}/></div>}
-                                  </div>
-                                  <div>
-                                      <div className="font-bold text-slate-800 flex items-center gap-2 group-hover:text-blue-600">
-                                          {aluno.nome}
-                                          {aluno.status === 'Inativo' && <span className="bg-red-100 text-red-600 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">Inativo</span>}
-                                          {isAniversariante(aluno.data_nascimento) && (
-                                            <span className="bg-pink-100 text-pink-700 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 uppercase italic">
-                                              Aniv. <Cake size={14} className="animate-bounce" />
-                                            </span>
-                                          )}
-                                          {aluno.atleta && <span className="w-2 h-2 rounded-full bg-blue-500" title="Atleta"></span>}
-                                      </div>
-                                      <div className="flex gap-2 mt-1">
-                                          <span className="text-[10px] font-black uppercase text-slate-400 bg-slate-100 px-2 py-0.5 rounded">{aluno.graduacao}</span>
-                                          {aluno.bolsista_jiujitsu && <span className="text-[10px] font-black uppercase bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded">Bols. Isento</span>}
-                                          {(aluno.divida_loja || 0) > 0 && <span className="text-[10px] font-black uppercase bg-red-100 text-red-600 px-2 py-0.5 rounded">Deve Loja</span>}
-                                      </div>
-                                  </div>
-                              </div>
-                          </td>
-                          <td className="p-4 text-center">
-                              {aluno.status === 'Inativo' ? (
-                                  <div className="text-xs font-bold text-slate-400 border border-slate-200 px-4 py-2 rounded-xl inline-flex">-</div>
-                              ) : aluno.pago_mes_atual ? (
-                                  <div className="bg-green-50 text-green-600 px-4 py-2 rounded-xl text-xs font-bold inline-flex items-center gap-2 border border-green-100"><CheckCircle size={14}/> {aluno.bolsista_jiujitsu ? 'ISENTO' : 'PAGO'}</div>
-                              ) : (
-                                  <div className="flex items-center justify-center gap-3">
-                                      <span className="text-[10px] font-black text-red-400 uppercase tracking-tighter">Pendente</span>
-                                      <button onClick={(e) => { e.stopPropagation(); abrirModalPagamento(aluno, mesAtualRef); }} className="w-10 h-10 bg-green-500 text-white rounded-xl hover:bg-green-600 shadow-md flex items-center justify-center transition-all hover:scale-110"><DollarSign size={20} /></button>
-                                  </div>
-                              )}
-                          </td>
-                          <td className="p-4 text-right">
-                              <div className="flex justify-end gap-1">
-                                <button onClick={(e)=>{ e.stopPropagation(); setFormData(aluno); setEditMode(true); setViewState('form')}} className="p-3 text-slate-400 hover:text-blue-600 rounded-xl transition-all"><Edit size={20}/></button>
-                                <button onClick={(e)=>{ e.stopPropagation(); setCustomAlert({ show: true, id: aluno.id, nome: aluno.nome }); }} className="p-3 text-slate-400 hover:text-red-500 rounded-xl transition-all"><Trash2 size={20}/></button>
-                              </div>
-                          </td>
-                      </tr>
-                    ))}
+                    ) : (
+                        gruposAlunos.map((grupo, idx) => (
+                            <React.Fragment key={idx}>
+                                {grupo.titulo && (
+                                    <tr className="bg-slate-50/50 border-y border-slate-100">
+                                        <td colSpan={3} className="p-3 px-5">
+                                            <div className="flex items-center gap-2 text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                                                <Zap size={14} className="text-yellow-500"/> {grupo.titulo} 
+                                                <span className="bg-white text-slate-400 border border-slate-200 px-2 py-0.5 rounded-full shadow-sm">{grupo.alunos.length} alunos</span>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                )}
+                                {grupo.alunos.map(aluno => (
+                                    <tr key={aluno.id} className="hover:bg-slate-50/50 transition-colors">
+                                        <td className="p-4 cursor-pointer group" onClick={() => { setSelectedAluno(aluno); setViewState('details'); }}>
+                                            <div className="flex items-center gap-4">
+                                                <div className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center relative border border-slate-200 overflow-hidden shadow-inner">
+                                                    {aluno.foto_url ? <img src={aluno.foto_url} className="w-full h-full object-cover" /> : <User className="text-slate-300" size={24}/>}
+                                                    {aluno.neurodivergente && <div className="absolute top-1 right-1 bg-purple-600 text-white p-1 rounded-full border border-white shadow-sm"><Brain size={10}/></div>}
+                                                </div>
+                                                <div>
+                                                    <div className="font-bold text-slate-800 flex items-center gap-2 group-hover:text-blue-600">
+                                                        {aluno.nome}
+                                                        {aluno.status === 'Inativo' && <span className="bg-red-100 text-red-600 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">Inativo</span>}
+                                                        {isAniversariante(aluno.data_nascimento) && (
+                                                          <span className="bg-pink-100 text-pink-700 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 uppercase italic">
+                                                            Aniv. <Cake size={14} className="animate-bounce" />
+                                                          </span>
+                                                        )}
+                                                        {aluno.atleta && <span className="w-2 h-2 rounded-full bg-blue-500" title="Atleta"></span>}
+                                                    </div>
+                                                    <div className="flex gap-2 mt-1">
+                                                        <span className="text-[10px] font-black uppercase text-slate-400 bg-slate-100 px-2 py-0.5 rounded">{aluno.graduacao}</span>
+                                                        {aluno.bolsista_jiujitsu && <span className="text-[10px] font-black uppercase bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded">Bols. Isento</span>}
+                                                        {(aluno.divida_loja || 0) > 0 && <span className="text-[10px] font-black uppercase bg-red-100 text-red-600 px-2 py-0.5 rounded">Deve Loja</span>}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td className="p-4 text-center">
+                                            {aluno.status === 'Inativo' ? (
+                                                <div className="text-xs font-bold text-slate-400 border border-slate-200 px-4 py-2 rounded-xl inline-flex">-</div>
+                                            ) : aluno.pago_mes_atual ? (
+                                                <div className="bg-green-50 text-green-600 px-4 py-2 rounded-xl text-xs font-bold inline-flex items-center gap-2 border border-green-100"><CheckCircle size={14}/> {aluno.bolsista_jiujitsu ? 'ISENTO' : 'PAGO'}</div>
+                                            ) : (
+                                                <div className="flex items-center justify-center gap-3">
+                                                    <span className="text-[10px] font-black text-red-400 uppercase tracking-tighter">Pendente</span>
+                                                    <button onClick={(e) => { e.stopPropagation(); abrirModalPagamento(aluno, mesAtualRef); }} className="w-10 h-10 bg-green-500 text-white rounded-xl hover:bg-green-600 shadow-md flex items-center justify-center transition-all hover:scale-110"><DollarSign size={20} /></button>
+                                                </div>
+                                            )}
+                                        </td>
+                                        <td className="p-4 text-right">
+                                            <div className="flex justify-end gap-1">
+                                              <button onClick={(e)=>{ e.stopPropagation(); setFormData(aluno); setEditMode(true); setViewState('form')}} className="p-3 text-slate-400 hover:text-blue-600 rounded-xl transition-all"><Edit size={20}/></button>
+                                              <button onClick={(e)=>{ e.stopPropagation(); setCustomAlert({ show: true, id: aluno.id, nome: aluno.nome }); }} className="p-3 text-slate-400 hover:text-red-500 rounded-xl transition-all"><Trash2 size={20}/></button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </React.Fragment>
+                        ))
+                    )}
                 </tbody>
               </table>
           </div>
