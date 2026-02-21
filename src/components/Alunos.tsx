@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { 
   Plus, Edit, Trash2, User, CheckCircle, 
   Brain, DollarSign, X, 
-  HeartPulse, Cake, Phone, ChevronLeft, Trophy, Medal, Zap, AlertTriangle, Droplet, ShoppingBag, Copy, Share2
+  HeartPulse, Cake, Phone, ChevronLeft, Trophy, Medal, Zap, AlertTriangle, Droplet, ShoppingBag, Copy, Share2, Search
 } from 'lucide-react';
 import { startOfMonth, endOfMonth, format, addMonths } from 'date-fns';
 import { useToast } from '../contexts/ToastContext';
@@ -431,16 +431,29 @@ export default function Alunos() {
               <button onClick={handleNovoAluno} className="bg-slate-900 text-white px-6 py-3 rounded-2xl flex items-center gap-2 hover:bg-black shadow-lg transition-all font-bold text-sm w-full sm:w-auto justify-center"><Plus size={20}/> NOVO ALUNO</button>
           </div>
           
-          <div className="flex gap-2 flex-wrap">
-              <div className="flex bg-slate-200 p-1 rounded-2xl gap-1 overflow-x-auto flex-1">
-                  {['Adulto', 'Infantil', 'Kids'].map(c => (<button key={c} onClick={()=>{setTabAtual(c as any); setFiltroDevedores(false);}} className={`flex-1 px-6 py-3 rounded-xl font-bold text-sm transition-all ${tabAtual===c && !filtroDevedores ? 'bg-white text-blue-600 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>{c}</button>))}
+          <div className="flex flex-col lg:flex-row gap-2 justify-between">
+              <div className="flex gap-2 flex-wrap flex-1">
+                  <div className="flex bg-slate-200 p-1 rounded-2xl gap-1 overflow-x-auto flex-1 md:flex-none">
+                      {['Adulto', 'Infantil', 'Kids'].map(c => (<button key={c} onClick={()=>{setTabAtual(c as any); setFiltroDevedores(false);}} className={`flex-1 md:flex-none px-6 py-3 rounded-xl font-bold text-sm transition-all ${tabAtual===c && !filtroDevedores ? 'bg-white text-blue-600 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>{c}</button>))}
+                  </div>
+                  <button 
+                    onClick={() => setFiltroDevedores(!filtroDevedores)} 
+                    className={`px-6 py-3 rounded-2xl font-bold text-sm flex items-center gap-2 transition-all ${filtroDevedores ? 'bg-red-600 text-white shadow-lg' : 'bg-red-50 text-red-600 border border-red-100'}`}
+                  >
+                    <AlertTriangle size={18} /> Inadimplentes
+                  </button>
               </div>
-              <button 
-                onClick={() => setFiltroDevedores(!filtroDevedores)} 
-                className={`px-6 py-3 rounded-2xl font-bold text-sm flex items-center gap-2 transition-all ${filtroDevedores ? 'bg-red-600 text-white shadow-lg' : 'bg-red-50 text-red-600 border border-red-100'}`}
-              >
-                <AlertTriangle size={18} /> Inadimplentes
-              </button>
+
+              <div className="relative w-full lg:w-72">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                  <input 
+                      type="text" 
+                      placeholder="Buscar aluno..." 
+                      value={searchTerm} 
+                      onChange={e => setSearchTerm(e.target.value)} 
+                      className="w-full pl-10 pr-4 py-3 rounded-2xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-sm font-medium shadow-sm"
+                  />
+              </div>
           </div>
 
           <div className="bg-white rounded-[2rem] shadow-sm overflow-hidden border border-slate-100">
