@@ -138,10 +138,9 @@ export default function Alunos() {
      setPagamentosParciais(novos);
   }
 
-  // --- NOVA FUNÇÃO: MÁSCARA DE WHATSAPP ---
   function handleWhatsAppChange(e: React.ChangeEvent<HTMLInputElement>) {
-      let value = e.target.value.replace(/\D/g, ''); // Remove tudo o que não é número
-      if (value.length > 11) value = value.slice(0, 11); // Limite de 11 dígitos no Brasil
+      let value = e.target.value.replace(/\D/g, ''); 
+      if (value.length > 11) value = value.slice(0, 11); 
       
       let formatted = value;
       if (value.length > 2) {
@@ -388,14 +387,21 @@ export default function Alunos() {
     else setFormData({ ...formData, plano_dias: [...diasAtuais, dia] });
   };
 
+  // --- LÓGICA DE FILTRO CORRIGIDA (Busca apenas na turma atual e ignora acentos) ---
   const filteredAlunos = alunos.filter(aluno => {
+    // 1. Respeita a Turma (Adulto, Infantil, Kids)
     const matchCategoria = (aluno.categoria === tabAtual || (!aluno.categoria && tabAtual === 'Adulto'));
-    const matchBusca = aluno.nome.toLowerCase().includes(searchTerm.toLowerCase());
     
+    // 2. Normaliza para ignorar acentos e pesquisa o termo
+    const termoNorm = searchTerm.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, "");
+    const nomeNorm = aluno.nome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, "");
+    const matchBusca = termoNorm === '' || nomeNorm.includes(termoNorm);
+    
+    // 3. Aplica o Filtro de Inadimplentes, se ativado
     if (filtroDevedores) {
         const deveMensalidade = !aluno.pago_mes_atual && aluno.status === 'Ativo';
         const deveLoja = (aluno.divida_loja || 0) > 0;
-        return matchBusca && (deveMensalidade || deveLoja);
+        return matchCategoria && matchBusca && (deveMensalidade || deveLoja);
     }
     
     return matchCategoria && matchBusca;
@@ -410,14 +416,12 @@ export default function Alunos() {
     setViewState('form');
   }
 
-  // --- Função de Segurança para Voltar limpando rastros ---
   function handleVoltarLista() {
       setPagamentoModal({ show: false, aluno: null, valorBase: 0, desconto: 0, mesReferencia: '', dataPagamento: new Date().toISOString().split('T')[0] });
       setReciboModal(null);
       setViewState('list');
   }
 
-  // ESTRUTURA GERAL (Garante que os Modais flutuem em qualquer tela)
   return (
     <div className="pb-20">
       
@@ -448,7 +452,7 @@ export default function Alunos() {
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                   <input 
                       type="text" 
-                      placeholder="Buscar aluno..." 
+                      placeholder={`Buscar em ${tabAtual}...`} 
                       value={searchTerm} 
                       onChange={e => setSearchTerm(e.target.value)} 
                       className="w-full pl-10 pr-4 py-3 rounded-2xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-sm font-medium shadow-sm"
@@ -460,7 +464,11 @@ export default function Alunos() {
               <table className="w-full text-left">
                 <thead className="bg-slate-50 text-slate-400 text-[10px] uppercase font-black tracking-widest"><tr><th className="p-5">Informação</th><th className="p-5 text-center">Status Pagto</th><th className="p-5 text-right">Ações</th></tr></thead>
                 <tbody className="divide-y divide-slate-50">
-                    {filteredAlunos.map(aluno => (
+                    {filteredAlunos.length === 0 ? (
+                        <tr>
+                            <td colSpan={3} className="p-8 text-center text-slate-500 font-medium">Nenhum aluno encontrado na turma {tabAtual}.</td>
+                        </tr>
+                    ) : filteredAlunos.map(aluno => (
                       <tr key={aluno.id} className="hover:bg-slate-50/50 transition-colors">
                           <td className="p-4 cursor-pointer group" onClick={() => { setSelectedAluno(aluno); setViewState('details'); }}>
                               <div className="flex items-center gap-4">
