@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { 
   LayoutDashboard, Users, Receipt, ShoppingBag, 
-  Settings, LogOut, Menu, X, BarChart3, GraduationCap, QrCode 
+  Settings, LogOut, Menu, X, BarChart3, GraduationCap, QrCode, Calendar 
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -19,6 +19,7 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'relatorios', label: 'Relatórios', icon: BarChart3 },
     { id: 'alunos', label: 'Alunos', icon: Users },
+    { id: 'leads', label: 'Agendamentos', icon: Calendar },
     { id: 'instrutores', label: 'Instrutores', icon: GraduationCap },
     { id: 'financeiro', label: 'Financeiro', icon: Receipt },
     { id: 'loja', label: 'Loja', icon: ShoppingBag },
