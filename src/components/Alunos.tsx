@@ -383,20 +383,28 @@ export default function Alunos() {
 
   const toggleDia = (dia: string) => {
     const diasAtuais = formData.plano_dias || [];
-    if (diasAtuais.includes(dia)) setFormData({ ...formData, plano_dias: diasAtuais.filter(d => d !== dia) });
-    else setFormData({ ...formData, plano_dias: [...diasAtuais, dia] });
+    
+    if (diasAtuais.includes(dia)) {
+        setFormData({ ...formData, plano_dias: diasAtuais.filter(d => d !== dia) });
+    } else {
+        let limite = 5;
+        if (formData.plano_tipo === '3 Dias') limite = 3;
+        if (formData.plano_tipo === '2 Dias') limite = 2;
+
+        if (diasAtuais.length >= limite) {
+            addToast(`O plano de ${formData.plano_tipo} permite selecionar no máximo ${limite} dias.`, 'warning');
+            return; 
+        }
+        setFormData({ ...formData, plano_dias: [...diasAtuais, dia] });
+    }
   };
 
   const filteredAlunos = alunos.filter(aluno => {
-    // 1. Respeita a Turma (Adulto, Infantil, Kids)
     const matchCategoria = (aluno.categoria === tabAtual || (!aluno.categoria && tabAtual === 'Adulto'));
-    
-    // 2. Normaliza para ignorar acentos e pesquisa o termo
     const termoNorm = searchTerm.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, "");
     const nomeNorm = aluno.nome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, "");
     const matchBusca = termoNorm === '' || nomeNorm.includes(termoNorm);
     
-    // 3. Aplica o Filtro de Inadimplentes, se ativado
     if (filtroDevedores) {
         const deveMensalidade = !aluno.pago_mes_atual && aluno.status === 'Ativo';
         const deveLoja = (aluno.divida_loja || 0) > 0;
@@ -406,7 +414,6 @@ export default function Alunos() {
     return matchCategoria && matchBusca;
   });
 
-  // --- LÓGICA DE AGRUPAMENTO DE PLANOS (Apenas para a aba Adulto) ---
   const gruposAlunos = tabAtual === 'Adulto' ? [
     { titulo: 'Plano: Todos os Dias', alunos: filteredAlunos.filter(a => a.plano_tipo === 'Todos os dias' || !a.plano_tipo) },
     { titulo: 'Plano: 3 Dias na Semana', alunos: filteredAlunos.filter(a => a.plano_tipo === '3 Dias') },
@@ -479,12 +486,20 @@ export default function Alunos() {
                     ) : (
                         gruposAlunos.map((grupo, idx) => (
                             <React.Fragment key={idx}>
+                                {/* VISUAL CLEAN E ELEGANTE PARA DIVISÃO DOS PLANOS */}
                                 {grupo.titulo && (
-                                    <tr className="bg-slate-50/50 border-y border-slate-100">
-                                        <td colSpan={3} className="p-3 px-5">
-                                            <div className="flex items-center gap-2 text-[10px] font-black text-slate-500 uppercase tracking-widest">
-                                                <Zap size={14} className="text-yellow-500"/> {grupo.titulo} 
-                                                <span className="bg-white text-slate-400 border border-slate-200 px-2 py-0.5 rounded-full shadow-sm">{grupo.alunos.length} alunos</span>
+                                    <tr>
+                                        <td colSpan={3} className="px-4 py-5 bg-slate-50/80 border-b border-slate-100">
+                                            <div className="flex items-center justify-between">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="w-8 h-8 rounded-xl bg-white border border-slate-200 shadow-sm flex items-center justify-center">
+                                                        <Zap size={16} className="text-blue-600"/>
+                                                    </div>
+                                                    <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest">{grupo.titulo}</h4>
+                                                </div>
+                                                <span className="bg-white text-slate-600 border border-slate-200 font-black px-3 py-1.5 rounded-xl text-[10px] shadow-sm uppercase tracking-widest">
+                                                    {grupo.alunos.length} {grupo.alunos.length === 1 ? 'Aluno' : 'Alunos'}
+                                                </span>
                                             </div>
                                         </td>
                                     </tr>
@@ -899,7 +914,20 @@ export default function Alunos() {
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                             <div className="space-y-4">
                                 <label className="text-xs font-bold text-slate-400 uppercase">Plano Escolhido</label>
-                                <select className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-bold text-slate-700" value={formData.plano_tipo || 'Todos os dias'} onChange={e=>setFormData({...formData, plano_tipo: e.target.value})}>
+                                <select 
+                                    className="w-full bg-slate-50 border-none rounded-2xl p-4 mt-2 font-bold text-slate-700" 
+                                    value={formData.plano_tipo || 'Todos os dias'} 
+                                    onChange={e => {
+                                        const novoPlano = e.target.value;
+                                        let novosDias = formData.plano_dias || [];
+                                        
+                                        // Se mudar para um plano menor e já tiver muitos dias marcados, corta os dias extras
+                                        if (novoPlano === '3 Dias' && novosDias.length > 3) novosDias = novosDias.slice(0, 3);
+                                        if (novoPlano === '2 Dias' && novosDias.length > 2) novosDias = novosDias.slice(0, 2);
+                                        
+                                        setFormData({...formData, plano_tipo: novoPlano, plano_dias: novosDias});
+                                    }}
+                                >
                                     <option value="Todos os dias">Todos os dias (R$ 80)</option>
                                     <option value="3 Dias">3 Dias na semana (R$ 70)</option>
                                     <option value="2 Dias">2 Dias na semana (R$ 60)</option>
@@ -908,7 +936,14 @@ export default function Alunos() {
                                     <div className="mt-4 animate-fadeIn">
                                         <div className="grid grid-cols-5 gap-1">
                                             {DIAS_SEMANA.map(dia => (
-                                                <button key={dia} type="button" onClick={()=>toggleDia(dia)} className={`py-3 rounded-xl text-[10px] font-black uppercase border-2 transition-all shadow-sm ${formData.plano_dias?.includes(dia) ? 'bg-blue-600 border-blue-600 text-white' : 'bg-slate-100 border-slate-200 text-slate-600'}`}>{dia.substring(0,3)}</button>
+                                                <button 
+                                                    key={dia} 
+                                                    type="button" 
+                                                    onClick={()=>toggleDia(dia)} 
+                                                    className={`py-3 rounded-xl text-[10px] font-black uppercase border-2 transition-all shadow-sm ${formData.plano_dias?.includes(dia) ? 'bg-blue-600 border-blue-600 text-white' : 'bg-slate-100 border-slate-200 text-slate-600'}`}
+                                                >
+                                                    {dia.substring(0,3)}
+                                                </button>
                                             ))}
                                         </div>
                                     </div>
