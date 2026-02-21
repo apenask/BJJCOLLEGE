@@ -912,9 +912,23 @@ export default function Alunos() {
                   </div>
                   
                   <div className="flex gap-4 mb-6">
-                      <div className="flex-1 bg-slate-50 rounded-2xl p-4 border border-slate-100 text-center">
-                          <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Valor Base</p>
-                          <p className="text-xl font-bold text-slate-800">R$ {pagamentoModal.valorBase.toFixed(2)}</p>
+                      <div className="flex-1 bg-slate-50 rounded-2xl p-4 border border-slate-100 text-center relative group">
+                          <p className="text-[10px] font-bold text-blue-500 uppercase mb-1">Valor Base</p>
+                          <div className="flex items-center justify-center gap-1">
+                              <span className="text-slate-800 font-bold">R$</span>
+                              <input 
+                                  type="number" 
+                                  className="w-16 bg-transparent border-none p-0 text-xl font-bold text-slate-800 focus:ring-0 text-center" 
+                                  value={pagamentoModal.valorBase || ''} 
+                                  onChange={e => {
+                                      const val = parseFloat(e.target.value) || 0;
+                                      setPagamentoModal(prev => ({ ...prev, valorBase: val }));
+                                      if (pagamentosParciais.length === 1) {
+                                          setPagamentosParciais([{ ...pagamentosParciais[0], valor: Math.max(0, val - pagamentoModal.desconto) }]);
+                                      }
+                                  }} 
+                              />
+                          </div>
                       </div>
                       <div className="flex-1 bg-red-50 rounded-2xl p-4 border border-red-100 text-center relative group">
                           <p className="text-[10px] font-bold text-red-400 uppercase mb-1">Desconto</p>
