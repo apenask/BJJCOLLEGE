@@ -143,8 +143,8 @@ export default function LandingPage() {
                       className="w-full bg-black border border-zinc-800 rounded-2xl p-4 text-white focus:border-white outline-none appearance-none font-bold"
                     >
                       <option value="Adulto">Adulto</option>
-                      <option value="Infantil">Infantil (A partir 7 anos)</option>
-                      <option value="Kids">Kids (Até 6 anos)</option>
+                      <option value="Infantil">Infantil (9 a 12 anos)</option>
+                      <option value="Kids">Kids (4 a 8 anos)</option>
                     </select>
                   </div>
               </div>
