@@ -9,12 +9,13 @@ export default function Relatorios() {
   const { addToast } = useToast();
   const [loading, setLoading] = useState(false);
   
-  // OS 3 FILTROS QUE VOCÊ PEDIU
   const [mesSelecionado, setMesSelecionado] = useState(format(new Date(), 'yyyy-MM'));
   const [dataInicio, setDataInicio] = useState(new Date().toISOString().slice(0, 8) + '01');
   const [dataFim, setDataFim] = useState(new Date().toISOString().slice(0, 10));
   
-  const [filtroTurma, setFiltroTurma] = useState<'Geral' | 'Adulto' | 'Infantil' | 'Kids' | 'Loja'>('Geral');
+  // Filtro Atualizado para bater com a tela do Financeiro
+  const [filtroTurma, setFiltroTurma] = useState<'Geral' | 'Adulto (Todos)' | 'Adulto (3 Dias)' | 'Adulto (2 Dias)' | 'Infantil' | 'Kids' | 'Loja'>('Geral');
+  
   const [resultado, setResultado] = useState<any[] | null>(null);
   const [totais, setTotais] = useState({ dinheiro: 0, pix: 0, credito: 0, debito: 0, fiado: 0, outros: 0, totalReceita: 0, totalDespesa: 0 });
 
@@ -26,25 +27,35 @@ export default function Relatorios() {
     try {
       const targetRef = format(parseISO(`${mesSelecionado}-01`), 'MM/yyyy');
       
-      // 1. Puxa do banco APENAS as transações que foram pagas no período de dias selecionado (Data Início até Data Fim)
+      // Adicionado plano_tipo na busca do alunos
       const { data: transacoes } = await supabase
           .from('transacoes')
-          .select(`*, alunos (nome, categoria)`)
+          .select(`*, alunos (nome, categoria, plano_tipo)`)
           .gte('data', dataInicio)
           .lte('data', dataFim)
           .order('data', { ascending: true });
       
       const filtrados = transacoes?.filter(t => {
-        // Ignora contas a pagar e loja fiado
         if (t.tipo === 'Conta a Pagar' || t.tipo === 'Pendente') return false; 
         
-        // 2. FILTRO MÁGICO: Só deixa passar se a transação for uma "conta daquele mês" que você escolheu
         const ref = t.mes_referencia || format(parseISO(t.data), 'MM/yyyy');
         if (ref !== targetRef) return false;
 
+        // Mesma Lógica de Filtro do Financeiro.tsx
         if (filtroTurma === 'Geral') return true;
         if (filtroTurma === 'Loja') return t.categoria === 'Venda Loja';
-        if (t.tipo === 'Receita' && t.alunos) return t.alunos.categoria === filtroTurma;
+        
+        if (t.tipo === 'Receita' && t.alunos) {
+            if (filtroTurma === 'Adulto (Todos)') {
+                return t.alunos.categoria === 'Adulto' && (!t.alunos.plano_tipo || t.alunos.plano_tipo === 'Todos os dias');
+            } else if (filtroTurma === 'Adulto (3 Dias)') {
+                return t.alunos.categoria === 'Adulto' && t.alunos.plano_tipo === '3 Dias';
+            } else if (filtroTurma === 'Adulto (2 Dias)') {
+                return t.alunos.categoria === 'Adulto' && t.alunos.plano_tipo === '2 Dias';
+            } else {
+                return t.alunos.categoria === filtroTurma;
+            }
+        }
         return false;
       }) || [];
       
@@ -180,8 +191,15 @@ export default function Relatorios() {
               </div>
               <div>
                   <label className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-1">Categoria / Turma</label>
+                  {/* Select Atualizado com as opções de Adulto */}
                   <select value={filtroTurma} onChange={e => setFiltroTurma(e.target.value as any)} className="w-full p-3 mt-1 border rounded-xl font-bold text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none">
-                      <option value="Geral">Geral (Tudo)</option><option value="Adulto">Turma Adulto</option><option value="Infantil">Turma Infantil</option><option value="Kids">Turma Kids</option><option value="Loja">Vendas Loja</option>
+                      <option value="Geral">Geral (Tudo)</option>
+                      <option value="Adulto (Todos)">Turma Adulto (Todos os dias)</option>
+                      <option value="Adulto (3 Dias)">Turma Adulto (3 Dias)</option>
+                      <option value="Adulto (2 Dias)">Turma Adulto (2 Dias)</option>
+                      <option value="Infantil">Turma Infantil</option>
+                      <option value="Kids">Turma Kids</option>
+                      <option value="Loja">Vendas Loja</option>
                   </select>
               </div>
           </div>
@@ -231,15 +249,22 @@ export default function Relatorios() {
               <table className="w-full text-left text-sm">
                   <thead className="bg-slate-50 text-slate-500 border-y uppercase text-[10px] tracking-wider font-bold"><tr><th className="py-3 px-2">Data Real</th><th className="py-3 px-2">Descrição</th><th className="py-3 px-2">Categoria</th><th className="py-3 px-2">Pagamento (Detalhes)</th><th className="py-3 px-2 text-right">Valor Total</th></tr></thead>
                   <tbody className="divide-y divide-slate-50">
-                      {resultado.map(t => (
-                          <tr key={t.id} className="hover:bg-slate-50">
-                              <td className="py-3 px-2 whitespace-nowrap font-mono">{format(parseISO(t.data), 'dd/MM/yy')}</td>
-                              <td className="py-3 px-2 font-medium">{t.descricao} {t.alunos && <span className="text-xs text-slate-400 block font-normal">{t.alunos.nome}</span>}</td>
-                              <td className="py-3 px-2 text-xs"><span className="bg-slate-100 text-slate-600 px-2 py-1 rounded font-bold">{t.categoria}</span></td>
-                              <td className="py-3 px-2 text-slate-600">{renderFormaPagamento(t)}</td>
-                              <td className={`py-3 px-2 text-right font-black ${t.tipo === 'Receita' ? 'text-green-600' : 'text-red-600'}`}>{t.tipo === 'Receita' ? '+' : '-'} R$ {Number(t.valor).toFixed(2)}</td>
-                          </tr>
-                      ))}
+                      {resultado.length === 0 ? (
+                           <tr><td colSpan={5} className="py-8 text-center text-slate-400">Nenhum resultado encontrado para este filtro.</td></tr>
+                      ) : (
+                          resultado.map(t => (
+                              <tr key={t.id} className="hover:bg-slate-50">
+                                  <td className="py-3 px-2 whitespace-nowrap font-mono">{format(parseISO(t.data), 'dd/MM/yy')}</td>
+                                  <td className="py-3 px-2 font-medium">
+                                      {t.descricao} 
+                                      {t.alunos && <span className="text-xs text-slate-400 block font-normal">{t.alunos.nome} <span className="italic">({t.alunos.plano_tipo || 'Padrão'})</span></span>}
+                                  </td>
+                                  <td className="py-3 px-2 text-xs"><span className="bg-slate-100 text-slate-600 px-2 py-1 rounded font-bold">{t.categoria}</span></td>
+                                  <td className="py-3 px-2 text-slate-600">{renderFormaPagamento(t)}</td>
+                                  <td className={`py-3 px-2 text-right font-black ${t.tipo === 'Receita' ? 'text-green-600' : 'text-red-600'}`}>{t.tipo === 'Receita' ? '+' : '-'} R$ {Number(t.valor).toFixed(2)}</td>
+                              </tr>
+                          ))
+                      )}
                   </tbody>
               </table>
           </div>

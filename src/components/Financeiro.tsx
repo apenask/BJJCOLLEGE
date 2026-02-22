@@ -9,8 +9,18 @@ import { format, isSameDay, isAfter, isBefore, addDays, parseISO, addMonths, add
 import { useToast } from '../contexts/ToastContext';
 
 interface Transacao {
-  id: string; descricao: string; valor: number; tipo: 'Receita' | 'Despesa' | 'Pendente' | 'Conta a Pagar'; categoria: string; data: string; aluno_id?: string; alunos?: { nome: string, categoria: string }; detalhes_pagamento?: any; mes_referencia?: string;
+  id: string; 
+  descricao: string; 
+  valor: number; 
+  tipo: 'Receita' | 'Despesa' | 'Pendente' | 'Conta a Pagar'; 
+  categoria: string; 
+  data: string; 
+  aluno_id?: string; 
+  alunos?: { nome: string, categoria: string, plano_tipo?: string }; 
+  detalhes_pagamento?: any; 
+  mes_referencia?: string;
 }
+
 interface ItemPagamento { metodo: string; valor: string; }
 
 export default function Financeiro() {
@@ -21,7 +31,10 @@ export default function Financeiro() {
   const [loading, setLoading] = useState(true);
   
   const [view, setView] = useState<'extrato' | 'contas_pagar'>('extrato');
-  const [filtroTurma, setFiltroTurma] = useState<'Geral' | 'Adulto' | 'Infantil' | 'Kids' | 'Loja'>('Geral');
+  
+  // Atualizado para os novos filtros de adulto
+  const [filtroTurma, setFiltroTurma] = useState<'Geral' | 'Adulto (Todos)' | 'Adulto (3 Dias)' | 'Adulto (2 Dias)' | 'Infantil' | 'Kids' | 'Loja'>('Geral');
+  
   const [searchTerm, setSearchTerm] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [customAlert, setCustomAlert] = useState({ show: false, title: '', message: '', onConfirm: () => {}, type: 'danger' as 'danger' | 'success' });
@@ -43,8 +56,9 @@ export default function Financeiro() {
   async function fetchDados() {
     try {
       setLoading(true);
+      // Alterado para buscar também o plano_tipo do aluno
       const { data, error } = await supabase.from('transacoes')
-        .select(`*, alunos (nome, categoria)`)
+        .select(`*, alunos (nome, categoria, plano_tipo)`)
         .neq('tipo', 'Pendente') 
         .order('data', { ascending: false });
       
@@ -184,7 +198,7 @@ export default function Financeiro() {
     } catch { addToast('Erro ao salvar.', 'error'); }
   }
 
-  // --- FILTROS MÁGICOS DE MÊS ---
+  // --- FILTROS MÁGICOS DE MÊS E TURMA ---
   const targetRef = format(parseISO(`${mesSelecionado}-01`), 'MM/yyyy');
 
   const transacoesFiltradas = transacoes.filter(t => {
@@ -192,7 +206,25 @@ export default function Financeiro() {
     const ref = t.mes_referencia || format(parseISO(t.data), 'MM/yyyy');
     if (ref !== targetRef) return false;
 
-    let matchTurma = filtroTurma === 'Geral' ? true : filtroTurma === 'Loja' ? t.categoria === 'Venda Loja' : (t.tipo === 'Receita' && t.alunos) ? t.alunos.categoria === filtroTurma : false;
+    // Nova Lógica de Filtro por Turma/Plano
+    let matchTurma = false;
+    
+    if (filtroTurma === 'Geral') {
+        matchTurma = true;
+    } else if (filtroTurma === 'Loja') {
+        matchTurma = t.categoria === 'Venda Loja';
+    } else if (t.tipo === 'Receita' && t.alunos) {
+        if (filtroTurma === 'Adulto (Todos)') {
+            matchTurma = t.alunos.categoria === 'Adulto' && (!t.alunos.plano_tipo || t.alunos.plano_tipo === 'Todos os dias');
+        } else if (filtroTurma === 'Adulto (3 Dias)') {
+            matchTurma = t.alunos.categoria === 'Adulto' && t.alunos.plano_tipo === '3 Dias';
+        } else if (filtroTurma === 'Adulto (2 Dias)') {
+            matchTurma = t.alunos.categoria === 'Adulto' && t.alunos.plano_tipo === '2 Dias';
+        } else {
+            matchTurma = t.alunos.categoria === filtroTurma;
+        }
+    }
+
     const matchBusca = t.descricao.toLowerCase().includes(searchTerm.toLowerCase()) || (t.alunos?.nome || '').toLowerCase().includes(searchTerm.toLowerCase());
     return matchTurma && matchBusca;
   });
@@ -252,7 +284,7 @@ export default function Financeiro() {
                   <div>
                       <span className="text-[10px] font-bold uppercase text-slate-400 tracking-wider block mb-1">{t.categoria}</span>
                       <h4 className="font-bold text-slate-800 text-lg leading-tight">{t.descricao}</h4>
-                      {t.alunos && <span className="text-xs text-slate-500">{t.alunos.nome}</span>}
+                      {t.alunos && <span className="text-xs text-slate-500">{t.alunos.nome} <span className="text-[10px] bg-slate-100 px-1 py-0.5 rounded">{t.alunos.plano_tipo || 'Padrão'}</span></span>}
                   </div>
                   <div className={`font-black text-lg ${isConta ? 'text-slate-700' : statusColor}`}>
                       {!isConta && (t.tipo === 'Receita' ? '+' : '-')} R$ {Number(t.valor).toFixed(2)}
@@ -309,7 +341,15 @@ export default function Financeiro() {
           <div className="flex flex-col md:flex-row gap-3 items-center justify-between">
               {view === 'extrato' ? (
                 <div className="flex gap-2 overflow-x-auto w-full md:w-auto pb-2 md:pb-0 no-scrollbar">
-                    {['Geral', 'Adulto', 'Infantil', 'Kids', 'Loja'].map((cat) => (<button key={cat} onClick={() => setFiltroTurma(cat as any)} className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap border transition-all ${filtroTurma === cat ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200'}`}>{cat === 'Geral' ? 'Tudo' : cat}</button>))}
+                    {['Geral', 'Adulto (Todos)', 'Adulto (3 Dias)', 'Adulto (2 Dias)', 'Infantil', 'Kids', 'Loja'].map((cat) => (
+                        <button 
+                            key={cat} 
+                            onClick={() => setFiltroTurma(cat as any)} 
+                            className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap border transition-all ${filtroTurma === cat ? 'bg-slate-800 text-white border-slate-800 shadow-md' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}
+                        >
+                            {cat === 'Geral' ? 'Tudo' : cat}
+                        </button>
+                    ))}
                 </div>
               ) : <div className="hidden md:block"></div>}
               
@@ -342,7 +382,7 @@ export default function Financeiro() {
             </div>
 
             <div className="md:hidden flex flex-col gap-2">
-                {transacoesFiltradas.length > 0 ? transacoesFiltradas.map(t => <TransactionCard key={t.id} t={t} />) : <div className="text-center p-8 text-slate-400">Nenhum registro neste mês.</div>}
+                {transacoesFiltradas.length > 0 ? transacoesFiltradas.map(t => <TransactionCard key={t.id} t={t} />) : <div className="text-center p-8 text-slate-400">Nenhum registro neste filtro.</div>}
             </div>
 
             <div className="hidden md:block bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
@@ -354,7 +394,10 @@ export default function Financeiro() {
                     {transacoesFiltradas.map(t => (
                         <tr key={t.id} className="hover:bg-slate-50 group transition-colors">
                             <td className="p-5 font-mono text-slate-500">{format(parseISO(t.data), 'dd/MM/yy')}</td>
-                            <td className="p-5 font-medium">{t.descricao}{t.alunos && <div className="text-xs text-slate-400 font-normal">{t.alunos.nome}</div>}</td>
+                            <td className="p-5 font-medium">
+                                {t.descricao}
+                                {t.alunos && <div className="text-xs text-slate-400 font-normal mt-0.5">{t.alunos.nome} • <span className="italic">{t.alunos.plano_tipo || 'Padrão'}</span></div>}
+                            </td>
                             <td className="p-5"><span className="bg-slate-100 text-slate-600 px-2 py-1 rounded text-xs font-bold">{t.categoria}</span></td>
                             <td className={`p-5 text-right font-bold ${t.tipo === 'Receita' ? 'text-green-600' : 'text-red-600'}`}>{t.tipo === 'Receita' ? '+' : '-'} R$ {Number(t.valor).toFixed(2)}</td>
                             <td className="p-5 text-right">
