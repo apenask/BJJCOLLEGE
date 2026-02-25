@@ -3,9 +3,9 @@ import { supabase } from '../lib/supabase';
 import { 
   Plus, Edit, Trash2, User, CheckCircle, 
   Brain, DollarSign, X, 
-  HeartPulse, Cake, Phone, ChevronLeft, Trophy, Medal, Zap, AlertTriangle, Droplet, ShoppingBag, Copy, Share2, Search
+  HeartPulse, Cake, Phone, ChevronLeft, Trophy, Medal, Zap, AlertTriangle, Droplet, ShoppingBag, Copy, Share2, Search, MessageCircle, Power, Clock
 } from 'lucide-react';
-import { startOfMonth, endOfMonth, format, addMonths } from 'date-fns';
+import { startOfMonth, endOfMonth, format, addMonths, differenceInDays } from 'date-fns';
 import { useToast } from '../contexts/ToastContext';
 import { useAuth } from '../contexts/AuthContext';
 import jsPDF from 'jspdf';
@@ -34,6 +34,7 @@ interface Aluno {
   pago_mes_atual?: boolean;
   pago_proximo_mes?: boolean;
   divida_loja?: number; 
+  ultimo_pagamento_data?: string; 
 }
 
 const DIAS_SEMANA = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta'];
@@ -89,15 +90,21 @@ export default function Alunos() {
         .from('transacoes')
         .select('aluno_id, data, mes_referencia')
         .eq('tipo', 'Receita')
-        .eq('categoria', 'Mensalidade');
+        .eq('categoria', 'Mensalidade')
+        .order('data', { ascending: false });
 
       const pagantesAtual = new Set();
       const pagantesProximo = new Set();
+      const ultimoPagamentoMap = new Map();
 
       pagamentos?.forEach(p => {
           const ref = p.mes_referencia || format(new Date(p.data), 'MM/yyyy');
           if (ref === mesAtualRef) pagantesAtual.add(p.aluno_id);
           if (ref === proximoMesRef) pagantesProximo.add(p.aluno_id);
+
+          if (!ultimoPagamentoMap.has(p.aluno_id)) {
+             ultimoPagamentoMap.set(p.aluno_id, p.data);
+          }
       });
       
       const { data: dividas } = await supabase.from('transacoes')
@@ -111,12 +118,18 @@ export default function Alunos() {
           dividaMap.set(d.aluno_id, atual + Number(d.valor));
       });
       
-      const alunosProc = dadosAlunos?.map((aluno: any) => ({
-        ...aluno,
-        pago_mes_atual: pagantesAtual.has(aluno.id) || aluno.bolsista_jiujitsu,
-        pago_proximo_mes: pagantesProximo.has(aluno.id) || aluno.bolsista_jiujitsu,
-        divida_loja: dividaMap.get(aluno.id) || 0
-      }));
+      const alunosProc = dadosAlunos?.map((aluno: any) => {
+        const ultimaData = ultimoPagamentoMap.get(aluno.id) || aluno.data_matricula;
+        
+        return {
+          ...aluno,
+          pago_mes_atual: pagantesAtual.has(aluno.id) || aluno.bolsista_jiujitsu,
+          pago_proximo_mes: pagantesProximo.has(aluno.id) || aluno.bolsista_jiujitsu,
+          divida_loja: dividaMap.get(aluno.id) || 0,
+          ultimo_pagamento_data: ultimaData
+        };
+      });
+
       setAlunos(alunosProc || []);
       
       if (selectedAluno) {
@@ -124,6 +137,23 @@ export default function Alunos() {
         if (atualizado) setSelectedAluno(atualizado);
       }
     } catch(e) { console.error(e); } finally { setLoading(false); }
+  }
+
+  async function alternarStatus(aluno: Aluno) {
+      const novoStatus = aluno.status === 'Ativo' ? 'Inativo' : 'Ativo';
+      try {
+          const { error } = await supabase.from('alunos').update({ status: novoStatus }).eq('id', aluno.id);
+          if (error) throw error;
+          
+          addToast(`Aluno marcado como ${novoStatus}!`, 'success');
+          
+          setAlunos(prev => prev.map(a => a.id === aluno.id ? { ...a, status: novoStatus } : a));
+          if (selectedAluno && selectedAluno.id === aluno.id) {
+              setSelectedAluno({ ...selectedAluno, status: novoStatus });
+          }
+      } catch (error) {
+          addToast('Erro ao atualizar status.', 'error');
+      }
   }
 
   function adicionarMetodo() {
@@ -193,6 +223,39 @@ export default function Alunos() {
       return res.join(' e ');
   }
 
+  function getTextoInadimplencia(aluno: Aluno) {
+      if (aluno.bolsista_jiujitsu) return null;
+      
+      const ultimaData = aluno.ultimo_pagamento_data || aluno.data_matricula;
+      if (!ultimaData) return null;
+
+      const dias = differenceInDays(new Date(), new Date(ultimaData));
+
+      if (aluno.status === 'Inativo') {
+          return <span className="text-[10px] text-red-500 font-bold uppercase italic mt-1 block">🚫 Inativo há {dias} dias</span>;
+      }
+
+      if (!aluno.pago_mes_atual && dias > 30) {
+          return <span className="text-[10px] text-orange-500 font-bold uppercase italic mt-1 block">⚠️ {dias} dias sem pagar</span>;
+      }
+
+      return null;
+  }
+
+  function abrirWhatsAppCobranca(aluno: Aluno) {
+      if (!aluno.whatsapp) {
+          addToast('Telefone não cadastrado.', 'warning');
+          return;
+      }
+      
+      const num = aluno.whatsapp.replace(/\D/g, '');
+      const ultimaData = aluno.ultimo_pagamento_data || aluno.data_matricula || 'data desconhecida';
+      
+      let msg = `Olá ${aluno.nome}, tudo bem? Aqui é da BJJ College! 🥋\n\nSentimos sua falta nos treinos. Notamos que faz um tempinho que você não aparece (desde ${format(new Date(ultimaData), 'dd/MM/yyyy')}).\n\nAconteceu alguma coisa? Queremos você de volta no tatame com a gente!\n\nQualquer dúvida sobre mensalidade ou horários, estou por aqui para ajudar. Oss!`;
+
+      window.open(`https://wa.me/55${num}?text=${encodeURIComponent(msg)}`, '_blank');
+  }
+
   function abrirModalPagamento(aluno: Aluno, mesRef: string) {
     let valor = 80.00;
     if (aluno.plano_tipo === '3 Dias') valor = 70.00;
@@ -229,6 +292,10 @@ export default function Alunos() {
             operador: operadorNome
         }
       }]);
+
+      if (pagamentoModal.aluno.status === 'Inativo') {
+          await supabase.from('alunos').update({ status: 'Ativo' }).eq('id', pagamentoModal.aluno.id);
+      }
 
       addToast(`Pagamento confirmado!`, 'success'); 
 
@@ -330,6 +397,7 @@ export default function Alunos() {
         delete (alunoData as any).pago_mes_atual; 
         delete (alunoData as any).pago_proximo_mes; 
         delete (alunoData as any).divida_loja; 
+        delete (alunoData as any).ultimo_pagamento_data;
 
         if (!alunoData.plano_tipo) alunoData.plano_tipo = 'Todos os dias';
         if (!alunoData.status) alunoData.status = 'Ativo';
@@ -486,7 +554,6 @@ export default function Alunos() {
                     ) : (
                         gruposAlunos.map((grupo, idx) => (
                             <React.Fragment key={idx}>
-                                {/* VISUAL CLEAN E ELEGANTE PARA DIVISÃO DOS PLANOS */}
                                 {grupo.titulo && (
                                     <tr>
                                         <td colSpan={3} className="px-4 py-5 bg-slate-50/80 border-b border-slate-100">
@@ -513,15 +580,18 @@ export default function Alunos() {
                                                     {aluno.neurodivergente && <div className="absolute top-1 right-1 bg-purple-600 text-white p-1 rounded-full border border-white shadow-sm"><Brain size={10}/></div>}
                                                 </div>
                                                 <div>
-                                                    <div className="font-bold text-slate-800 flex items-center gap-2 group-hover:text-blue-600">
-                                                        {aluno.nome}
-                                                        {aluno.status === 'Inativo' && <span className="bg-red-100 text-red-600 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">Inativo</span>}
-                                                        {isAniversariante(aluno.data_nascimento) && (
-                                                          <span className="bg-pink-100 text-pink-700 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 uppercase italic">
-                                                            Aniv. <Cake size={14} className="animate-bounce" />
-                                                          </span>
-                                                        )}
-                                                        {aluno.atleta && <span className="w-2 h-2 rounded-full bg-blue-500" title="Atleta"></span>}
+                                                    <div className="font-bold text-slate-800 flex flex-col group-hover:text-blue-600">
+                                                        <span className="flex items-center gap-2">
+                                                            {aluno.nome}
+                                                            {aluno.status === 'Inativo' && <span className="bg-red-100 text-red-600 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">Inativo</span>}
+                                                            {isAniversariante(aluno.data_nascimento) && (
+                                                            <span className="bg-pink-100 text-pink-700 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 uppercase italic">
+                                                                Aniv. <Cake size={14} className="animate-bounce" />
+                                                            </span>
+                                                            )}
+                                                            {aluno.atleta && <span className="w-2 h-2 rounded-full bg-blue-500" title="Atleta"></span>}
+                                                        </span>
+                                                        {getTextoInadimplencia(aluno)}
                                                     </div>
                                                     <div className="flex gap-2 mt-1">
                                                         <span className="text-[10px] font-black uppercase text-slate-400 bg-slate-100 px-2 py-0.5 rounded">{aluno.graduacao}</span>
@@ -565,6 +635,12 @@ export default function Alunos() {
       {/* ==================================================== */}
       {viewState === 'details' && selectedAluno && (() => {
         const a = selectedAluno;
+        
+        // CÁLCULO DE INADIMPLÊNCIA PARA O MODAL
+        const diasSemPagar = a.ultimo_pagamento_data ? differenceInDays(new Date(), new Date(a.ultimo_pagamento_data)) : 0;
+        // Considera devedor se inativo ou se ativo mas não pagou o mês e tem mais de 30 dias do último pagamento
+        const isDevedor = !a.bolsista_jiujitsu && ((a.status === 'Ativo' && !a.pago_mes_atual && diasSemPagar > 30) || a.status === 'Inativo');
+
         return (
             <div className="animate-fadeIn">
                 <div className="flex items-center justify-between mb-6">
@@ -597,6 +673,36 @@ export default function Alunos() {
                                 <span className="bg-blue-100 text-blue-700 text-[10px] font-black px-3 py-1 rounded-full uppercase">{a.categoria}</span>
                                 {a.status === 'Inativo' && <span className="bg-red-100 text-red-600 text-[10px] font-black px-3 py-1 rounded-full uppercase">INATIVO</span>}
                             </div>
+                            
+                            {/* BLOCO DE ALERTA DE INADIMPLÊNCIA NO TOPO DO PERFIL */}
+                            {isDevedor && (
+                                <div className="w-full bg-red-50 border-l-4 border-red-500 p-4 rounded-r-2xl mb-6 shadow-sm animate-pulse">
+                                    <div className="flex items-center justify-between gap-3"> {/* Layout Flex Row para alinhar lado a lado */}
+                                        <div className="text-left">
+                                            <p className="text-red-700 font-bold uppercase text-[10px] tracking-widest flex items-center gap-1"><Clock size={12}/> Atenção Financeira</p>
+                                            <p className="text-red-900 font-black text-lg leading-tight">
+                                                {a.status === 'Inativo' ? `Inativo há ${diasSemPagar} dias` : `${diasSemPagar} dias sem pagar`}
+                                            </p>
+                                        </div>
+                                        {a.whatsapp && (
+                                            <button 
+                                                onClick={() => abrirWhatsAppCobranca(a)}
+                                                className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-xl text-xs font-bold uppercase flex items-center gap-2 shadow-md transition-all active:scale-95 shrink-0" 
+                                            >
+                                                <MessageCircle size={16} /> Cobrar
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* BOTÃO ALTERNAR STATUS */}
+                            <button 
+                                onClick={() => alternarStatus(a)}
+                                className={`w-full mb-6 py-3 rounded-2xl font-black uppercase text-xs flex items-center justify-center gap-2 transition-all shadow-md ${a.status === 'Ativo' ? 'bg-red-50 text-red-600 border border-red-100 hover:bg-red-100' : 'bg-green-500 text-white hover:bg-green-600'}`}
+                            >
+                                <Power size={18} /> {a.status === 'Ativo' ? 'Desativar Aluno' : 'Reativar Aluno'}
+                            </button>
 
                             <div className="w-full p-6 rounded-3xl border border-slate-100 bg-slate-50 mb-6 shadow-sm">
                                 <p className="text-[10px] font-black text-slate-400 uppercase mb-4 tracking-widest border-b border-slate-200 pb-2">Controle de Mensalidades</p>
