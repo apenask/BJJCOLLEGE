@@ -278,12 +278,23 @@ export default function Alunos() {
     try {
       const operadorNome = user?.nome || user?.usuario || 'Operador Local';
 
+      // AJUSTE DE DATA PARA RESPEITAR A COMPETÊNCIA SELECIONADA
+      const [mesRef, anoRef] = pagamentoModal.mesReferencia.split('/');
+      const hoje = new Date();
+      const diaAtual = String(hoje.getDate()).padStart(2, '0');
+      
+      // Se a competência for diferente do mês atual, "forçamos" a data para o mês da competência
+      // Isso garante que o lançamento apareça no caixa/relatório do mês correto conforme regra de negócio
+      const dataParaLancamento = (pagamentoModal.mesReferencia === format(hoje, 'MM/yyyy'))
+        ? new Date(`${pagamentoModal.dataPagamento}T12:00:00`).toISOString()
+        : new Date(`${anoRef}-${mesRef}-${diaAtual}T12:00:00`).toISOString();
+
       await supabase.from('transacoes').insert([{
         descricao: `Mensalidade (${pagamentoModal.mesReferencia}) - ${pagamentoModal.aluno.nome}`,
         valor: valorTotalCalculado,
         tipo: 'Receita',
         categoria: 'Mensalidade',
-        data: new Date(`${pagamentoModal.dataPagamento}T12:00:00`).toISOString(), 
+        data: dataParaLancamento, 
         mes_referencia: pagamentoModal.mesReferencia, 
         aluno_id: pagamentoModal.aluno.id,
         detalhes_pagamento: { 
@@ -301,7 +312,7 @@ export default function Alunos() {
 
       const dadosRecibo = {
           aluno: pagamentoModal.aluno.nome,
-          data: new Date(`${pagamentoModal.dataPagamento}T12:00:00`),
+          data: new Date(dataParaLancamento),
           referencia: `Mensalidade (${pagamentoModal.mesReferencia})`, 
           valorBase: pagamentoModal.valorBase,
           desconto: pagamentoModal.desconto,
@@ -1082,9 +1093,20 @@ export default function Alunos() {
           return (
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
               <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-md shadow-2xl animate-fadeIn border">
-                  <div className="flex justify-between mb-6 italic font-black uppercase">
-                      <h3>Receber Mensalidade <span className="text-blue-600 border border-blue-200 bg-blue-50 px-2 py-1 rounded-lg text-xs ml-2">{pagamentoModal.mesReferencia}</span></h3>
-                      <button onClick={()=>setPagamentoModal({show:false, aluno:null, valorBase:0, desconto:0, mesReferencia: '', dataPagamento: new Date().toISOString().split('T')[0]})}><X size={24}/></button>
+                  <div className="flex justify-between items-center mb-6">
+                      <h3 className="italic font-black uppercase flex flex-col">
+                        <span className="text-xs text-slate-400 font-bold mb-1">Competência</span>
+                        <input 
+                            type="month" 
+                            className="bg-blue-50 text-blue-600 border border-blue-200 px-3 py-2 rounded-xl text-sm font-black focus:ring-2 focus:ring-blue-500 outline-none"
+                            value={`${pagamentoModal.mesReferencia.split('/')[1]}-${pagamentoModal.mesReferencia.split('/')[0]}`}
+                            onChange={e => {
+                                const [y, m] = e.target.value.split('-');
+                                if (y && m) setPagamentoModal(prev => ({ ...prev, mesReferencia: `${m}/${y}` }));
+                            }}
+                        />
+                      </h3>
+                      <button onClick={()=>setPagamentoModal({show:false, aluno:null, valorBase:0, desconto:0, mesReferencia: '', dataPagamento: new Date().toISOString().split('T')[0]})} className="p-2 hover:bg-slate-100 rounded-full transition-colors"><X size={24}/></button>
                   </div>
 
                   <div className="mb-4">
