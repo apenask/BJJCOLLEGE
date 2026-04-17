@@ -5,6 +5,7 @@ import {
   AlertTriangle, CheckCircle 
 } from 'lucide-react';
 import { useToast } from '../contexts/ToastContext';
+import ConfirmModal from './ConfirmModal';
 
 interface AppUser {
   id: string;
@@ -32,14 +33,9 @@ export default function Configuracoes() {
   const [showForm, setShowForm] = useState(false);
   const [editMode, setEditMode] = useState(false);
   
-  // --- ESTADO PARA O ALERTA PERSONALIZADO ---
-  const [customAlert, setCustomAlert] = useState({ 
-    show: false, 
-    title: '', 
-    message: '', 
-    onConfirm: () => {}, 
-    type: 'danger' as 'danger' | 'success' 
-  });
+  // Estados para o ConfirmModal
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [confirmData, setConfirmData] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
 
   // Estado para conexão DB
   const [dbStatus, setDbStatus] = useState<'online' | 'offline' | 'checking'>('checking');
@@ -216,15 +212,16 @@ export default function Configuracoes() {
                           <Edit size={18} />
                         </button>
                         
-                        {/* BOTÃO DE EXCLUIR CHAMANDO O ALERTA CUSTOMIZADO */}
+                        {/* BOTÃO DE EXCLUIR CHAMANDO O ConfirmModal */}
                         <button 
-                          onClick={() => setCustomAlert({
-                            show: true,
-                            title: 'Excluir Usuário?',
-                            message: `Deseja remover o acesso de "${user.nome}"? Esta ação impedirá o login deste usuário imediatamente.`,
-                            type: 'danger',
-                            onConfirm: () => handleDelete(user.id)
-                          })}
+                          onClick={() => {
+                            setConfirmData({
+                              title: 'Excluir Usuário?',
+                              message: `Deseja remover o acesso de "${user.nome}"? Esta ação impedirá o login deste usuário imediatamente.`,
+                              onConfirm: () => handleDelete(user.id)
+                            });
+                            setShowConfirm(true);
+                          }}
                           className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                           title="Excluir"
                         >
@@ -338,32 +335,26 @@ export default function Configuracoes() {
         </div>
       )}
 
-      {/* --- MODAL DE ALERTA PERSONALIZADO (REQUERIDO) --- */}
-      {customAlert.show && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[999] animate-fadeIn">
-          <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-sm shadow-2xl text-center border border-white">
-            <div className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 ${customAlert.type === 'danger' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
-              {customAlert.type === 'danger' ? <AlertTriangle size={40} /> : <CheckCircle size={40} />}
-            </div>
-            <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tighter italic mb-2">{customAlert.title}</h3>
-            <p className="text-slate-500 mb-8 leading-relaxed font-medium">{customAlert.message}</p>
-            <div className="flex flex-col gap-3">
-              <button 
-                onClick={() => { customAlert.onConfirm(); setCustomAlert({ ...customAlert, show: false }); }}
-                className={`w-full py-4 rounded-[1.5rem] font-black uppercase tracking-widest shadow-xl transition-all ${customAlert.type === 'danger' ? 'bg-red-600 text-white shadow-red-200 hover:bg-red-700' : 'bg-green-600 text-white shadow-green-200 hover:bg-green-700'}`}
-              >
-                Confirmar
-              </button>
-              <button 
-                onClick={() => setCustomAlert({ ...customAlert, show: false })}
-                className="w-full py-4 bg-slate-100 text-slate-500 rounded-[1.5rem] font-bold uppercase text-xs tracking-widest hover:bg-slate-200"
-              >
-                Cancelar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* ConfirmModal reutilizável */}
+      <ConfirmModal
+        show={showConfirm}
+        title={confirmData?.title || ''}
+        message={confirmData?.message || ''}
+        type="danger"
+        onConfirm={() => {
+          if (confirmData?.onConfirm) {
+            confirmData.onConfirm();
+          }
+          setShowConfirm(false);
+          setConfirmData(null);
+        }}
+        onCancel={() => {
+          setShowConfirm(false);
+          setConfirmData(null);
+        }}
+        confirmLabel="CONFIRMAR"
+        cancelLabel="CANCELAR"
+      />
     </div>
   );
 }

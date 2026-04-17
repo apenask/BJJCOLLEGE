@@ -3,8 +3,11 @@ import { supabase } from '../lib/supabase';
 import { TrendingUp, TrendingDown, Wallet, Calendar, HandCoins, Users, Banknote, QrCode, CreditCard } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { QUERY_LIMITS } from '../lib/config';
+import { useToast } from '../contexts/ToastContext';
 
 export default function Dashboard({ onNavigate }: { onNavigate: (page: string) => void }) {
+  const { addToast } = useToast();
   const [loading, setLoading] = useState(true);
   const [mesSelecionado, setMesSelecionado] = useState(format(new Date(), 'yyyy-MM'));
   const [stats, setStats] = useState({
@@ -18,6 +21,33 @@ export default function Dashboard({ onNavigate }: { onNavigate: (page: string) =
     try {
       setLoading(true);
       const targetRef = format(parseISO(`${mesSelecionado}-01`), 'MM/yyyy'); // Ex: '03/2026'
+
+ codex/fix-typo-in-the-codebase
+      // Limita quantidade de registros para performance
+      const { data: transacoes, error: erroTransacoes } = await supabase
+        .from('transacoes')
+        .select('*')
+        .gte('data', inicioMes)
+        .lte('data', fimMes)
+        .neq('tipo', 'Pendente')
+        .limit(QUERY_LIMITS.DASHBOARD_TRANSACTIONS);
+
+      if (erroTransacoes) throw erroTransacoes;
+
+      const { data: pagamentosInstrutores, error: erroComissoes } = await supabase
+        .from('pagamentos_instrutores')
+        .select('valor_pago')
+        .eq('mes_referencia', hoje.toISOString().slice(0, 7))
+        .limit(QUERY_LIMITS.LIST_DEFAULT);
+
+      if (erroComissoes) throw erroComissoes;
+
+      const { data: alunos, error: erroAlunos } = await supabase
+        .from('alunos')
+        .select('id, bolsista_jiujitsu, bolsista_musculacao')
+        .limit(QUERY_LIMITS.DASHBOARD_ALUNOS);
+
+      if (erroAlunos) throw erroAlunos;
 
       const { data: transacoes } = await supabase.from('transacoes').select('*').neq('tipo', 'Pendente');
       const { data: pagamentosInstrutores } = await supabase.from('pagamentos_instrutores').select('valor_pago').eq('mes_referencia', mesSelecionado);
@@ -39,11 +69,19 @@ export default function Dashboard({ onNavigate }: { onNavigate: (page: string) =
             if (t.detalhes_pagamento?.metodos) {
                 t.detalhes_pagamento.metodos.forEach((m: any) => {
                     const v = Number(m.valor);
-                    if (m.metodo === 'Dinheiro') pDinheiro += v; else if (m.metodo === 'Pix') pPix += v; else if (m.metodo === 'Cartao') pCredito += v; else if (m.metodo === 'Debito') pDebito += v;
+                    if (m.metodo === 'Dinheiro') pDinheiro += v; 
+                    else if (m.metodo === 'Pix') pPix += v; 
+                    else if (m.metodo === 'Cartao') pCredito += v; 
+                    else if (m.metodo === 'Debito') pDebito += v;
                 });
             } else if (t.detalhes_pagamento?.pagamento) {
                 const pag = t.detalhes_pagamento.pagamento;
-                if (pag.metodo === 'Dinheiro') pDinheiro += valor; else if (pag.metodo === 'Pix') pPix += valor; else if (pag.metodo === 'Cartao') { if (pag.tipo === 'Débito') pDebito += valor; else pCredito += valor; }
+                if (pag.metodo === 'Dinheiro') pDinheiro += valor; 
+                else if (pag.metodo === 'Pix') pPix += valor; 
+                else if (pag.metodo === 'Cartao') { 
+                  if (pag.tipo === 'Débito') pDebito += valor; 
+                  else pCredito += valor; 
+                }
             }
         } else if (t.tipo === 'Despesa') { 
             despesas += valor; 
@@ -60,20 +98,27 @@ export default function Dashboard({ onNavigate }: { onNavigate: (page: string) =
         totalAlunos: totalCadastrados, alunosPagantes: pagantesReais, alunosInadimplentes: totalCadastrados - pagantesReais,
         pagtoDinheiro: pDinheiro, pagtoPix: pPix, pagtoCredito: pCredito, pagtoDebito: pDebito
       });
-    } catch (error) { console.error('Erro dashboard:', error); } finally { setLoading(false); }
+    } catch (error: any) { 
+      console.error('Erro dashboard:', error);
+      addToast('Erro ao carregar dashboard. Tente novamente.', 'error');
+    } finally { 
+      setLoading(false); 
+    }
   }
 
   const Card = ({ title, value, icon: Icon, color, subtext }: any) => {
     const bgClass = color.includes('600') ? color.replace('text-', 'bg-').replace('600', '100') : color.replace('text-', 'bg-').replace('500', '100');
     return (<div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex items-start justify-between relative overflow-hidden group hover:shadow-md transition-all"><div className={`absolute -right-6 -top-6 opacity-5 p-4 rounded-full ${color.replace('text-', 'bg-')} transition-transform group-hover:scale-110`}><Icon size={100} /></div><div><p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-2">{title}</p><h3 className={`text-2xl sm:text-3xl font-bold ${color}`}>{value}</h3>{subtext && <p className="text-xs text-slate-400 mt-1">{subtext}</p>}</div><div className={`p-3 rounded-xl ${bgClass} ${color}`}><Icon size={24} /></div></div>);
   };
+  
   const MiniCardPagamento = ({ titulo, valor, icon: Icon, corBg, corTexto }: any) => (<div className={`flex items-center gap-4 p-4 rounded-xl border ${corBg} border-opacity-50 shadow-sm bg-white`}><div className={`p-3 rounded-lg ${corBg} ${corTexto} bg-opacity-20`}><Icon size={20} /></div><div><p className="text-xs font-bold uppercase text-slate-500">{titulo}</p><p className={`text-lg font-bold ${corTexto}`}>{valor}</p></div></div>);
+  
   const GraficoPizza = () => {
       const total = stats.receitaBruta || 1; const pDespesas = (stats.despesas / total) * 100; const pComissoes = (stats.totalComissoes / total) * 100;
       const degDespesas = (pDespesas * 3.6); const degComissoes = degDespesas + (pComissoes * 3.6);
       return (<div className="flex flex-col sm:flex-row items-center gap-8 justify-center h-full"><div className="w-48 h-48 rounded-full shadow-inner relative flex items-center justify-center border-4 border-white shadow-slate-200" style={{ background: `conic-gradient(#ef4444 0deg ${degDespesas}deg, #f97316 ${degDespesas}deg ${degComissoes}deg, #2563eb ${degComissoes}deg 360deg)` }}><div className="w-32 h-32 bg-white rounded-full flex flex-col items-center justify-center shadow-sm"><span className="text-xs text-slate-400 uppercase font-bold">Entradas</span><span className="text-xl font-bold text-slate-800">R$ {stats.receitaBruta.toFixed(0)}</span></div></div><div className="space-y-4 w-full max-w-xs"><div className="flex items-center justify-between"><div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-blue-600"></div><span className="text-sm font-medium text-slate-600">Saldo Líquido</span></div><span className="text-sm font-bold text-slate-800">{(100-pDespesas-pComissoes).toFixed(1)}%</span></div><div className="flex items-center justify-between"><div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-orange-500"></div><span className="text-sm font-medium text-slate-600">Comissões</span></div><span className="text-sm font-bold text-slate-800">{pComissoes.toFixed(1)}%</span></div><div className="flex items-center justify-between"><div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-red-500"></div><span className="text-sm font-medium text-slate-600">Despesas</span></div><span className="text-sm font-bold text-slate-800">{pDespesas.toFixed(1)}%</span></div></div></div>);
   };
-
+  
   const pctPagantes = stats.totalAlunos > 0 ? ((stats.alunosPagantes / stats.totalAlunos) * 100).toFixed(0) : 0;
   if (loading) return <div className="p-8 text-center text-slate-400 animate-pulse">Carregando painel...</div>;
 
