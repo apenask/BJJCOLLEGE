@@ -15,6 +15,9 @@ import Relatorios from './components/Relatorios';
 import SecurityGuard, { SECURITY_KEY } from './components/SecurityGuard';
 import AccessDenied from './components/AccessDenied';
 import LiberarAcesso from './components/LiberarAcesso';
+import LandingPage from './components/LandingPage'; 
+import Leads from './components/Leads'; 
+import MatriculaPublica from './components/MatriculaPublica'; // <- IMPORTAÇÃO DA MATRÍCULA OFICIAL ADICIONADA
 
 const VALID_PAGES = [
   'dashboard',
@@ -25,7 +28,8 @@ const VALID_PAGES = [
   'pix',
   'configuracoes',
   'dev',
-  'instrutores'
+  'instrutores',
+  'leads' 
 ] as const;
 
 type ValidPage = (typeof VALID_PAGES)[number];
@@ -36,11 +40,9 @@ function isValidPage(page: string): page is ValidPage {
 
 function getInitialPage(): ValidPage {
   const storedPage = localStorage.getItem('bjj_last_page');
-
   if (storedPage && VALID_PAGES.includes(storedPage as ValidPage)) {
     return storedPage as ValidPage;
   }
-
   return 'dashboard';
 }
 
@@ -64,7 +66,17 @@ function AppContent() {
 
   useEffect(() => { localStorage.setItem('bjj_last_page', currentPage); }, [currentPage]);
 
+  if (window.location.pathname === '/site' || window.location.pathname === '/matricula') {
+      return <LandingPage />;
+  }
+  
+  // <- AQUI ESTÁ A ROTA DA MATRÍCULA OFICIAL ADICIONADA
+  if (window.location.pathname === '/matricula-oficial') {
+      return <MatriculaPublica />;
+  }
+
   if (window.location.pathname === '/liberar-acesso') return <LiberarAcesso />;
+
   if (loading || checkingDevice) return <div className="flex items-center justify-center h-screen bg-slate-50"><div className="text-slate-500 font-medium animate-pulse uppercase tracking-widest text-xs">Carregando...</div></div>;
   if (!isAuthorizedDevice) return <AccessDenied />;
   if (!user) return <Login />;
@@ -74,6 +86,7 @@ function AppContent() {
       {currentPage === 'dashboard' && <Dashboard onNavigate={handleNavigate} />}
       {currentPage === 'relatorios' && <Relatorios />}
       {currentPage === 'alunos' && <Alunos />}
+      {currentPage === 'leads' && <Leads />}
       {currentPage === 'financeiro' && <Financeiro />}
       {currentPage === 'loja' && <Loja />}
       {currentPage === 'pix' && <Pix />}

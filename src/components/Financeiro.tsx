@@ -8,63 +8,68 @@ import {
 import { format, isSameDay, isAfter, isBefore, addDays, parseISO, addMonths, addWeeks } from 'date-fns';
 import { useToast } from '../contexts/ToastContext';
 
-// --- TIPAGEM ---
 interface Transacao {
-  id: string; descricao: string; valor: number; tipo: 'Receita' | 'Despesa' | 'Pendente' | 'Conta a Pagar'; categoria: string; data: string; aluno_id?: string; alunos?: { nome: string, categoria: string }; detalhes_pagamento?: any;
+  id: string; 
+  descricao: string; 
+  valor: number; 
+  tipo: 'Receita' | 'Despesa' | 'Pendente' | 'Conta a Pagar'; 
+  categoria: string; 
+  data: string; 
+  aluno_id?: string; 
+  alunos?: { nome: string, categoria: string, plano_tipo?: string }; 
+  detalhes_pagamento?: any; 
+  mes_referencia?: string;
 }
+
 interface ItemPagamento { metodo: string; valor: string; }
 
-// --- COMPONENTE PRINCIPAL ---
 export default function Financeiro() {
   const { addToast } = useToast();
   
-  // Estados de Dados
   const [transacoes, setTransacoes] = useState<Transacao[]>([]);
   const [contasPagar, setContasPagar] = useState<Transacao[]>([]);
   const [loading, setLoading] = useState(true);
   
-  // Estados de UI
   const [view, setView] = useState<'extrato' | 'contas_pagar'>('extrato');
-  const [filtroTurma, setFiltroTurma] = useState<'Geral' | 'Adulto' | 'Infantil' | 'Kids' | 'Loja'>('Geral');
+  
+  // Atualizado para os novos filtros de adulto
+  const [filtroTurma, setFiltroTurma] = useState<'Geral' | 'Adulto (Todos)' | 'Adulto (3 Dias)' | 'Adulto (2 Dias)' | 'Infantil' | 'Kids' | 'Loja'>('Geral');
+  
   const [searchTerm, setSearchTerm] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [customAlert, setCustomAlert] = useState({ show: false, title: '', message: '', onConfirm: () => {}, type: 'danger' as 'danger' | 'success' });
 
-  // Estados do Formulário
+  const [mesSelecionado, setMesSelecionado] = useState(format(new Date(), 'yyyy-MM'));
+
   const [formData, setFormData] = useState({ 
     id: '', descricao: '', tipo: 'Receita' as any, categoria: 'Mensalidade', 
     data: new Date().toISOString().split('T')[0], codigo_barras: '' 
   });
   const [itensPagamento, setItensPagamento] = useState<ItemPagamento[]>([{ metodo: 'Dinheiro', valor: '' }]);
   
-  // Estados para Parcelamento
   const [isParcelamento, setIsParcelamento] = useState(false);
-  const [configParcelas, setConfigParcelas] = useState({ qtd: 2, intervalo: 'Mensal' }); // Mensal, Semanal
-  const [parcelasPreview, setParcelasPreview] = useState<any[]>([]); // Para editar antes de salvar
+  const [configParcelas, setConfigParcelas] = useState({ qtd: 2, intervalo: 'Mensal' });
+  const [parcelasPreview, setParcelasPreview] = useState<any[]>([]);
 
   useEffect(() => { fetchDados(); }, []);
 
   async function fetchDados() {
     try {
       setLoading(true);
+      // Alterado para buscar também o plano_tipo do aluno
       const { data, error } = await supabase.from('transacoes')
-        .select(`*, alunos (nome, categoria)`)
+        .select(`*, alunos (nome, categoria, plano_tipo)`)
         .neq('tipo', 'Pendente') 
         .order('data', { ascending: false });
       
       if (error) throw error;
       
       const todos = data || [];
-      // O extrato SÓ MOSTRA o que é Receita ou Despesa (já baixado/pago)
       setTransacoes(todos.filter((t: Transacao) => t.tipo === 'Receita' || t.tipo === 'Despesa'));
-      
-      // Contas a Pagar mostra tudo que é "Conta a Pagar", independente da data
       setContasPagar(todos.filter((t: Transacao) => t.tipo === 'Conta a Pagar').sort((a:Transacao, b:Transacao) => a.data.localeCompare(b.data)));
       
     } catch { addToast('Erro ao carregar.', 'error'); } finally { setLoading(false); }
   }
-
-  // --- AÇÕES ---
 
   async function handleDelete(transacao: Transacao) { 
     try {
@@ -96,8 +101,6 @@ export default function Financeiro() {
         fetchDados();
     } catch { addToast('Erro ao dar baixa.', 'error'); }
   }
-
-  // --- LÓGICA DO FORMULÁRIO ---
 
   function handleNovoLancamento() { 
       setFormData({ 
@@ -195,41 +198,61 @@ export default function Financeiro() {
     } catch { addToast('Erro ao salvar.', 'error'); }
   }
 
-  // --- CÁLCULOS E FILTROS ---
+  // --- FILTROS MÁGICOS DE MÊS E TURMA ---
+  const targetRef = format(parseISO(`${mesSelecionado}-01`), 'MM/yyyy');
 
   const transacoesFiltradas = transacoes.filter(t => {
-    let matchTurma = filtroTurma === 'Geral' ? true : filtroTurma === 'Loja' ? t.categoria === 'Venda Loja' : (t.tipo === 'Receita' && t.alunos) ? t.alunos.categoria === filtroTurma : false;
+    // Filtro de Mês (Baseado na referência ou na data)
+    const ref = t.mes_referencia || format(parseISO(t.data), 'MM/yyyy');
+    if (ref !== targetRef) return false;
+
+    // Nova Lógica de Filtro por Turma/Plano
+    let matchTurma = false;
+    
+    if (filtroTurma === 'Geral') {
+        matchTurma = true;
+    } else if (filtroTurma === 'Loja') {
+        matchTurma = t.categoria === 'Venda Loja';
+    } else if (t.tipo === 'Receita' && t.alunos) {
+        if (filtroTurma === 'Adulto (Todos)') {
+            matchTurma = t.alunos.categoria === 'Adulto' && (!t.alunos.plano_tipo || t.alunos.plano_tipo === 'Todos os dias');
+        } else if (filtroTurma === 'Adulto (3 Dias)') {
+            matchTurma = t.alunos.categoria === 'Adulto' && t.alunos.plano_tipo === '3 Dias';
+        } else if (filtroTurma === 'Adulto (2 Dias)') {
+            matchTurma = t.alunos.categoria === 'Adulto' && t.alunos.plano_tipo === '2 Dias';
+        } else {
+            matchTurma = t.alunos.categoria === filtroTurma;
+        }
+    }
+
     const matchBusca = t.descricao.toLowerCase().includes(searchTerm.toLowerCase()) || (t.alunos?.nome || '').toLowerCase().includes(searchTerm.toLowerCase());
     return matchTurma && matchBusca;
   });
 
+  const contasPagarFiltradas = contasPagar.filter(t => {
+      const ref = t.mes_referencia || format(parseISO(t.data), 'MM/yyyy');
+      return ref === targetRef;
+  });
+
   const resumo = transacoesFiltradas.reduce((acc, t) => { const val = Number(t.valor); if (t.tipo === 'Receita') acc.receitas += val; else acc.despesas += val; return acc; }, { receitas: 0, despesas: 0 });
   
-  // LÓGICA DE DETALHAMENTO DE PAGAMENTO (RESTAURADO)
   const detalhamento = transacoesFiltradas.reduce((acc, t) => {
     if (t.tipo !== 'Receita') return acc;
-    
     if (t.detalhes_pagamento?.metodos && Array.isArray(t.detalhes_pagamento.metodos)) {
         t.detalhes_pagamento.metodos.forEach((m: any) => {
             const v = Number(m.valor);
-            if (m.metodo === 'Dinheiro') acc.dinheiro += v; 
-            else if (m.metodo === 'Pix') acc.pix += v; 
-            else if (m.metodo === 'Cartao') acc.credito += v; 
-            else if (m.metodo === 'Debito') acc.debito += v;
+            if (m.metodo === 'Dinheiro') acc.dinheiro += v; else if (m.metodo === 'Pix') acc.pix += v; else if (m.metodo === 'Cartao') acc.credito += v; else if (m.metodo === 'Debito') acc.debito += v;
         });
     } else if (t.detalhes_pagamento?.pagamento) {
         const pag = t.detalhes_pagamento.pagamento; const v = Number(t.valor);
-        if (pag.metodo === 'Dinheiro') acc.dinheiro += v; 
-        else if (pag.metodo === 'Pix') acc.pix += v; 
-        else if (pag.metodo === 'Cartao') { if (pag.tipo === 'Débito') acc.debito += v; else acc.credito += v; }
+        if (pag.metodo === 'Dinheiro') acc.dinheiro += v; else if (pag.metodo === 'Pix') acc.pix += v; else if (pag.metodo === 'Cartao') { if (pag.tipo === 'Débito') acc.debito += v; else acc.credito += v; }
     }
     return acc;
   }, { dinheiro: 0, pix: 0, credito: 0, debito: 0 });
 
-  // Helpers UI
   const hoje = new Date();
   const amanha = addDays(hoje, 1);
-  const temNotificacao = contasPagar.some(c => {
+  const temNotificacao = contasPagarFiltradas.some(c => {
       const d = parseISO(c.data);
       return isSameDay(d, hoje) || isSameDay(d, amanha) || isBefore(d, hoje);
   });
@@ -241,7 +264,6 @@ export default function Financeiro() {
       return 'bg-green-50 border-green-100 text-green-600'; 
   }
 
-  // Componente MiniCard de Método (RESTAURADO)
   const MiniCard = ({ label, value, icon: Icon, colorClass }: any) => (
       <div className={`flex items-center gap-3 p-3 rounded-2xl border border-opacity-50 bg-white shadow-sm ${colorClass}`}>
           <div className="p-2.5 rounded-xl bg-white bg-opacity-60">
@@ -262,7 +284,7 @@ export default function Financeiro() {
                   <div>
                       <span className="text-[10px] font-bold uppercase text-slate-400 tracking-wider block mb-1">{t.categoria}</span>
                       <h4 className="font-bold text-slate-800 text-lg leading-tight">{t.descricao}</h4>
-                      {t.alunos && <span className="text-xs text-slate-500">{t.alunos.nome}</span>}
+                      {t.alunos && <span className="text-xs text-slate-500">{t.alunos.nome} <span className="text-[10px] bg-slate-100 px-1 py-0.5 rounded">{t.alunos.plano_tipo || 'Padrão'}</span></span>}
                   </div>
                   <div className={`font-black text-lg ${isConta ? 'text-slate-700' : statusColor}`}>
                       {!isConta && (t.tipo === 'Receita' ? '+' : '-')} R$ {Number(t.valor).toFixed(2)}
@@ -290,7 +312,6 @@ export default function Financeiro() {
   return (
     <div className="animate-fadeIn pb-24 md:pb-10 max-w-full overflow-hidden">
       
-      {/* --- HEADER --- */}
       <div className="flex flex-col gap-4 mb-6">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
               <div>
@@ -298,11 +319,21 @@ export default function Financeiro() {
                   <p className="text-slate-500 text-sm">Gerencie o fluxo de caixa do CT.</p>
               </div>
               
-              <div className="flex bg-slate-100 p-1 rounded-2xl w-full md:w-auto self-start">
-                  <button onClick={() => setView('extrato')} className={`flex-1 md:flex-none px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${view === 'extrato' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Extrato (Realizado)</button>
-                  <button onClick={() => setView('contas_pagar')} className={`flex-1 md:flex-none px-6 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 ${view === 'contas_pagar' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
-                      A Pagar (Futuro)
-                      {temNotificacao && <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse ring-2 ring-white"></span>}
+              <div className="flex bg-slate-100 p-1 rounded-2xl w-full md:w-auto self-start items-center gap-2">
+                  <div className="flex bg-white px-2 rounded-xl shadow-sm border border-slate-200">
+                      <Calendar className="text-blue-500" size={18} />
+                      <input 
+                          type="month" 
+                          value={mesSelecionado}
+                          onChange={(e) => setMesSelecionado(e.target.value)}
+                          className="bg-transparent border-none focus:ring-0 font-bold text-slate-700 text-sm w-36"
+                      />
+                  </div>
+                  
+                  <button onClick={() => setView('extrato')} className={`flex-1 md:flex-none px-4 py-2 rounded-xl text-sm font-bold transition-all ${view === 'extrato' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Extrato</button>
+                  <button onClick={() => setView('contas_pagar')} className={`flex-1 md:flex-none px-4 py-2 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 ${view === 'contas_pagar' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+                      A Pagar
+                      {temNotificacao && <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse ring-2 ring-white"></span>}
                   </button>
               </div>
           </div>
@@ -310,7 +341,15 @@ export default function Financeiro() {
           <div className="flex flex-col md:flex-row gap-3 items-center justify-between">
               {view === 'extrato' ? (
                 <div className="flex gap-2 overflow-x-auto w-full md:w-auto pb-2 md:pb-0 no-scrollbar">
-                    {['Geral', 'Adulto', 'Infantil', 'Kids', 'Loja'].map((cat) => (<button key={cat} onClick={() => setFiltroTurma(cat as any)} className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap border transition-all ${filtroTurma === cat ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200'}`}>{cat === 'Geral' ? 'Tudo' : cat}</button>))}
+                    {['Geral', 'Adulto (Todos)', 'Adulto (3 Dias)', 'Adulto (2 Dias)', 'Infantil', 'Kids', 'Loja'].map((cat) => (
+                        <button 
+                            key={cat} 
+                            onClick={() => setFiltroTurma(cat as any)} 
+                            className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap border transition-all ${filtroTurma === cat ? 'bg-slate-800 text-white border-slate-800 shadow-md' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}
+                        >
+                            {cat === 'Geral' ? 'Tudo' : cat}
+                        </button>
+                    ))}
                 </div>
               ) : <div className="hidden md:block"></div>}
               
@@ -332,10 +371,9 @@ export default function Financeiro() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm"><div className="flex justify-between mb-1"><span className="text-slate-400 text-xs font-bold uppercase">Entradas</span><div className="p-1.5 bg-green-50 rounded-lg text-green-600"><TrendingUp size={16}/></div></div><h3 className="text-2xl font-black text-slate-800">R$ {resumo.receitas.toFixed(2)}</h3></div>
                 <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm"><div className="flex justify-between mb-1"><span className="text-slate-400 text-xs font-bold uppercase">Saídas (Pagas)</span><div className="p-1.5 bg-red-50 rounded-lg text-red-600"><TrendingDown size={16}/></div></div><h3 className="text-2xl font-black text-slate-800">R$ {resumo.despesas.toFixed(2)}</h3></div>
-                <div className={`bg-white p-5 rounded-2xl border-l-4 shadow-sm ${resumo.receitas - resumo.despesas >= 0 ? 'border-blue-500' : 'border-red-500'}`}><div className="flex justify-between mb-1"><span className="text-slate-400 text-xs font-bold uppercase">Saldo em Caixa</span><div className="p-1.5 bg-slate-100 rounded-lg text-slate-600"><DollarSign size={16}/></div></div><h3 className={`text-2xl font-black ${resumo.receitas - resumo.despesas >= 0 ? 'text-blue-600' : 'text-red-600'}`}>R$ {(resumo.receitas - resumo.despesas).toFixed(2)}</h3></div>
+                <div className={`bg-white p-5 rounded-2xl border-l-4 shadow-sm ${resumo.receitas - resumo.despesas >= 0 ? 'border-blue-500' : 'border-red-500'}`}><div className="flex justify-between mb-1"><span className="text-slate-400 text-xs font-bold uppercase">Saldo Líquido</span><div className="p-1.5 bg-slate-100 rounded-lg text-slate-600"><DollarSign size={16}/></div></div><h3 className={`text-2xl font-black ${resumo.receitas - resumo.despesas >= 0 ? 'text-blue-600' : 'text-red-600'}`}>R$ {(resumo.receitas - resumo.despesas).toFixed(2)}</h3></div>
             </div>
 
-            {/* MINI CARDS DE MÉTODOS (RESTAURADO) */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <MiniCard label="Dinheiro" value={`R$ ${detalhamento.dinheiro.toFixed(0)}`} icon={Banknote} colorClass="border-green-200 bg-green-50 text-green-700" />
                 <MiniCard label="Pix" value={`R$ ${detalhamento.pix.toFixed(0)}`} icon={QrCode} colorClass="border-teal-200 bg-teal-50 text-teal-700" />
@@ -343,12 +381,10 @@ export default function Financeiro() {
                 <MiniCard label="Débito" value={`R$ ${detalhamento.debito.toFixed(0)}`} icon={CreditCard} colorClass="border-indigo-200 bg-indigo-50 text-indigo-700" />
             </div>
 
-            {/* LISTA MOBILE (CARDS) */}
             <div className="md:hidden flex flex-col gap-2">
-                {transacoesFiltradas.length > 0 ? transacoesFiltradas.map(t => <TransactionCard key={t.id} t={t} />) : <div className="text-center p-8 text-slate-400">Nada encontrado.</div>}
+                {transacoesFiltradas.length > 0 ? transacoesFiltradas.map(t => <TransactionCard key={t.id} t={t} />) : <div className="text-center p-8 text-slate-400">Nenhum registro neste filtro.</div>}
             </div>
 
-            {/* LISTA DESKTOP (TABELA) */}
             <div className="hidden md:block bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
                 <table className="w-full text-left">
                     <thead className="bg-slate-50 text-slate-500 text-xs font-bold uppercase tracking-wider">
@@ -358,7 +394,10 @@ export default function Financeiro() {
                     {transacoesFiltradas.map(t => (
                         <tr key={t.id} className="hover:bg-slate-50 group transition-colors">
                             <td className="p-5 font-mono text-slate-500">{format(parseISO(t.data), 'dd/MM/yy')}</td>
-                            <td className="p-5 font-medium">{t.descricao}{t.alunos && <div className="text-xs text-slate-400 font-normal">{t.alunos.nome}</div>}</td>
+                            <td className="p-5 font-medium">
+                                {t.descricao}
+                                {t.alunos && <div className="text-xs text-slate-400 font-normal mt-0.5">{t.alunos.nome} • <span className="italic">{t.alunos.plano_tipo || 'Padrão'}</span></div>}
+                            </td>
                             <td className="p-5"><span className="bg-slate-100 text-slate-600 px-2 py-1 rounded text-xs font-bold">{t.categoria}</span></td>
                             <td className={`p-5 text-right font-bold ${t.tipo === 'Receita' ? 'text-green-600' : 'text-red-600'}`}>{t.tipo === 'Receita' ? '+' : '-'} R$ {Number(t.valor).toFixed(2)}</td>
                             <td className="p-5 text-right">
@@ -385,19 +424,17 @@ export default function Financeiro() {
                   </div>
               )}
 
-             {/* LISTA MOBILE */}
              <div className="md:hidden flex flex-col gap-2">
-                {contasPagar.length > 0 ? contasPagar.map(t => <TransactionCard key={t.id} t={t} isConta={true} />) : <div className="text-center p-8 text-slate-400">Nenhuma conta agendada.</div>}
+                {contasPagarFiltradas.length > 0 ? contasPagarFiltradas.map(t => <TransactionCard key={t.id} t={t} isConta={true} />) : <div className="text-center p-8 text-slate-400">Nenhuma conta agendada para este mês.</div>}
             </div>
 
-            {/* LISTA DESKTOP */}
             <div className="hidden md:block bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
                 <table className="w-full text-left">
                     <thead className="bg-slate-50 text-slate-500 text-xs font-bold uppercase tracking-wider">
                         <tr><th className="p-5">Vencimento</th><th className="p-5">Descrição</th><th className="p-5">Status</th><th className="p-5 text-right">Valor</th><th className="p-5 text-right">Ações</th></tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 text-sm text-slate-700">
-                        {contasPagar.map(t => {
+                        {contasPagarFiltradas.map(t => {
                             const statusColor = getStatusColor(t.data);
                             return (
                                 <tr key={t.id} className="hover:bg-slate-50 group transition-colors">
@@ -421,12 +458,10 @@ export default function Financeiro() {
         </div>
       )}
 
-      {/* --- MODAL DE FORMULÁRIO (ADD/EDIT) --- */}
       {showForm && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-end md:items-center justify-center p-0 md:p-4 z-50">
             <div className="bg-white rounded-t-[2rem] md:rounded-3xl w-full max-w-lg shadow-2xl max-h-[90vh] flex flex-col animate-slideUp md:animate-fadeIn">
                 
-                {/* Header Modal */}
                 <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-white rounded-t-[2rem] md:rounded-t-3xl sticky top-0 z-10">
                     <div>
                         <h3 className="text-xl font-black text-slate-800">{formData.id ? 'Editar Lançamento' : 'Novo Lançamento'}</h3>
@@ -437,7 +472,6 @@ export default function Financeiro() {
 
                 <div className="p-6 overflow-y-auto custom-scrollbar space-y-5">
                     
-                    {/* Switch Parcelamento (Apenas na criação) */}
                     {!formData.id && (
                         <div className="flex gap-2 p-1 bg-slate-100 rounded-xl mb-4">
                             <button type="button" onClick={() => { setIsParcelamento(false); setParcelasPreview([]); }} className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${!isParcelamento ? 'bg-white shadow text-blue-600' : 'text-slate-500'}`}>Único</button>
@@ -445,7 +479,6 @@ export default function Financeiro() {
                         </div>
                     )}
 
-                    {/* Conteúdo: Se Parcelamento estiver ATIVO e tiver PREVIEW, mostra lista de parcelas */}
                     {isParcelamento && parcelasPreview.length > 0 ? (
                         <div className="space-y-4">
                             <div className="flex items-center gap-2 text-blue-600 bg-blue-50 p-3 rounded-xl border border-blue-100">
@@ -485,7 +518,6 @@ export default function Financeiro() {
                                     <input className="w-full p-3 bg-slate-50 border-transparent focus:bg-white border focus:border-blue-500 rounded-xl transition-all font-medium" required placeholder="Ex: Kimono, Conta de Luz..." value={formData.descricao} onChange={e=>setFormData({...formData, descricao: e.target.value})} />
                                 </div>
 
-                                {/* Seção Parcelamento Config */}
                                 {isParcelamento && (
                                     <div className="p-4 bg-blue-50 border border-blue-100 rounded-xl space-y-3">
                                         <div className="flex justify-between items-center"><h4 className="font-bold text-blue-800 text-sm">Configurar Repetição</h4><Repeat size={16} className="text-blue-500"/></div>
@@ -504,7 +536,6 @@ export default function Financeiro() {
                                     </div>
                                 )}
 
-                                {/* Valores e Datas */}
                                 <div className="space-y-2">
                                     <label className="text-xs font-bold text-slate-500 uppercase ml-1">{isParcelamento ? 'Valor TOTAL (será dividido)' : 'Valor e Métodos'}</label>
                                     {itensPagamento.map((item, index) => (
@@ -526,7 +557,6 @@ export default function Financeiro() {
                                     <div>
                                         <label className="text-xs font-bold text-slate-500 uppercase ml-1">Tipo do Lançamento</label>
                                         <select className="w-full p-3 bg-slate-50 border rounded-xl font-medium" disabled={view === 'contas_pagar'} value={formData.tipo} onChange={e=>setFormData({...formData, tipo: e.target.value as any})}>
-                                            {/* NOMES CLAROS PARA EVITAR ERRO */}
                                             {view === 'contas_pagar' 
                                                 ? <option value="Conta a Pagar">Conta a Pagar</option> 
                                                 : <>
@@ -569,7 +599,6 @@ export default function Financeiro() {
         </div>
       )}
 
-      {/* --- ALERTA CUSTOMIZADO --- */}
       {customAlert.show && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[100]">
           <div className="bg-white rounded-[2rem] p-8 w-full max-w-sm text-center animate-bounceIn">
