@@ -1,41 +1,67 @@
 import React, { useState } from 'react';
 import { ShieldAlert, Lock, Unlock, ArrowRight, AlertCircle } from 'lucide-react';
-import { SECURITY_KEY } from './SecurityGuard';
+import { STORAGE_KEYS } from '../lib/config';
+import { useToast } from '../contexts/ToastContext';
+import { supabase } from '../lib/supabase';
 
 export default function AccessDenied() {
+  const { addToast } = useToast();
   const [clickCount, setClickCount] = useState(0);
   const [showUnlock, setShowUnlock] = useState(false);
   const [senha, setSenha] = useState('');
   const [error, setError] = useState('');
-
-  const SENHA_MESTRA = 'oss123';
+  const [loading, setLoading] = useState(false);
 
   const handleSecretClick = () => {
     const newCount = clickCount + 1;
     setClickCount(newCount);
     
-    // Ao 5º clique, mostra o formulário (sem avisar antes)
     if (newCount >= 5) {
       setShowUnlock(true);
       setClickCount(0);
     }
   };
 
-  const handleUnlock = (e: React.FormEvent) => {
+  const handleUnlock = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (senha === SENHA_MESTRA) {
-      localStorage.setItem(SECURITY_KEY, 'true');
+    setError('');
+    setLoading(true);
+
+    try {
+      // Validação via RPC no Supabase (segura, não expõe senha no frontend)
+      const { data, error: rpcError } = await supabase.rpc('validar_senha_mestra', {
+        senha_input: senha
+      });
+
+      if (rpcError) {
+        // Se houver erro na RPC, mostrar mensagem clara para o administrador
+        if (rpcError.message.includes('Function') || rpcError.message.includes('function')) {
+          console.error('RPC validar_senha_mestra não encontrada no Supabase.');
+          throw new Error('Função de validação não configurada. Contate o administrador do sistema.');
+        }
+        throw rpcError;
+      }
+
+      if (!data || !data[0]?.sucesso) {
+        throw new Error('Senha incorreta!');
+      }
+
+      localStorage.setItem(STORAGE_KEYS.AUTHORIZED_DEVICE, 'true');
+      addToast('Dispositivo liberado com sucesso!', 'success');
       window.location.reload();
-    } else {
-      setError('Senha incorreta!');
+      
+    } catch (err: any) {
+      console.error('Erro na liberação:', err);
+      setError(err.message || 'Erro ao validar senha.');
       setSenha('');
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
     <div className="min-h-screen bg-black flex flex-col items-center justify-center p-4 text-center select-none relative overflow-hidden">
       
-      {/* CONTEÚDO PRINCIPAL (BLOQUEIO) */}
       <div className={`transition-all duration-500 ${showUnlock ? 'blur-sm opacity-50' : 'opacity-100'}`}>
         <div className="animate-bounce mb-8 flex justify-center">
           <ShieldAlert size={80} className="text-red-600" />
@@ -60,21 +86,18 @@ export default function AccessDenied() {
           <p className="text-xs text-red-500 mt-2 font-mono">IP TRACKED & LOGGED</p>
         </div>
 
-        {/* CADEADO SECRETO (BOTÃO) - Sem contador visível agora */}
         <div 
           onClick={handleSecretClick}
           className="mt-12 opacity-40 hover:opacity-100 transition-opacity cursor-pointer p-4 inline-block"
           title="Área Restrita"
         >
           <div className="flex flex-col items-center gap-2">
-            {/* O cadeado ainda pulsa se clicar, para dar feedback tátil sutil, mas sem números */}
             <Lock size={24} className={clickCount > 0 ? "text-red-500 duration-75" : "text-gray-600"} />
             <p className="text-gray-600 text-xs font-mono">ID: {navigator.userAgent.replace(/\D/g, '').slice(0, 10)}</p>
           </div>
         </div>
       </div>
 
-      {/* MODAL DE DESBLOQUEIO */}
       {showUnlock && (
         <div className="absolute inset-0 flex items-center justify-center z-50 bg-black/80 backdrop-blur-md animate-fadeIn">
           <div className="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-sm border-4 border-blue-600 transform scale-100 transition-all">
@@ -100,7 +123,8 @@ export default function AccessDenied() {
                   type="password" 
                   autoFocus
                   placeholder="Senha..."
-                  className="w-full p-3 border-2 border-slate-300 rounded-lg text-lg focus:border-blue-600 focus:ring-0 outline-none transition-colors text-slate-900"
+                  disabled={loading}
+                  className="w-full p-3 border-2 border-slate-300 rounded-lg text-lg focus:border-blue-600 focus:ring-0 outline-none transition-colors text-slate-900 disabled:bg-slate-100"
                   value={senha}
                   onChange={e => setSenha(e.target.value)}
                 />
@@ -110,15 +134,17 @@ export default function AccessDenied() {
                 <button 
                   type="button"
                   onClick={() => { setShowUnlock(false); setClickCount(0); setError(''); }}
-                  className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-lg hover:bg-slate-200 transition-colors"
+                  disabled={loading}
+                  className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-lg hover:bg-slate-200 transition-colors disabled:opacity-50"
                 >
                   Cancelar
                 </button>
                 <button 
                   type="submit"
-                  className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
+                  disabled={loading}
+                  className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
                 >
-                  LIBERAR <ArrowRight size={18} />
+                  {loading ? 'VALIDANDO...' : (<>LIBERAR <ArrowRight size={18} /></>)}
                 </button>
               </div>
             </form>
